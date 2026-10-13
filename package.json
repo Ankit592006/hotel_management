@@ -1,0 +1,21 @@
+{
+  "name": "smartserve",
+  "version": "1.0.0",
+  "description": "SmartServe – QR-Based Restaurant Ordering & Management System",
+  "scripts": {
+    "dev:backend": "npm --prefix backend run dev",
+    "dev:frontend": "npm --prefix frontend run dev",
+    "seed": "npm --prefix backend run seed",
+    "build:frontend": "npm --prefix frontend run build"
+  },
+  "keywords": [
+    "restaurant",
+    "qr-code",
+    "mern",
+    "razorpay",
+    "socketio",
+    "mongodb"
+  ],
+  "author": "",
+  "license": "ISC"
+}
