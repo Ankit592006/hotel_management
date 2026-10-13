@@ -104,8 +104,8 @@ export const OrderHistoryPage = () => {
       </form>
 
       {/* Orders Table */}
-      <div className="glass-panel" style={{ overflow: 'hidden' }}>
-        <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '14px' }}>
+      <div className="glass-panel" style={{ overflowX: 'auto', WebkitOverflowScrolling: 'touch' }}>
+        <table style={{ width: '100%', minWidth: '650px', borderCollapse: 'collapse', textAlign: 'left', fontSize: '14px' }}>
           <thead>
             <tr style={{ borderBottom: '1px solid var(--border-subtle)', background: 'rgba(0, 0, 0, 0.25)', color: 'var(--text-secondary)', fontSize: '12px', textTransform: 'uppercase' }}>
               <th style={{ padding: '14px 18px' }}>Order #</th>

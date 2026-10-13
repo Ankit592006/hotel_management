@@ -128,34 +128,9 @@ export const CartDrawer = ({ onOrderPlaced }) => {
   };
 
   return (
-    <div
-      style={{
-        position: 'fixed',
-        inset: 0,
-        zIndex: 100,
-        backgroundColor: 'rgba(0, 0, 0, 0.75)',
-        backdropFilter: 'blur(6px)',
-        display: 'flex',
-        justifyContent: 'center',
-        alignItems: 'flex-end'
-      }}
-      onClick={() => setIsCartOpen(false)}
-    >
+    <div className="cart-modal-overlay" onClick={() => setIsCartOpen(false)}>
       <div
-        className="glass-panel animate-slide-up"
-        style={{
-          width: '100%',
-          maxWidth: '480px',
-          maxHeight: '92vh',
-          backgroundColor: '#0d1322',
-          borderTopLeftRadius: '24px',
-          borderTopRightRadius: '24px',
-          borderBottomLeftRadius: 0,
-          borderBottomRightRadius: 0,
-          display: 'flex',
-          flexDirection: 'column',
-          overflow: 'hidden'
-        }}
+        className="cart-modal-panel animate-slide-up"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Drawer Header */}
@@ -376,7 +351,7 @@ export const CartDrawer = ({ onOrderPlaced }) => {
 
         {/* Drawer Action Footer */}
         {items.length > 0 && (
-          <div style={{ padding: '16px 20px', borderTop: '1px solid var(--border-subtle)', background: 'rgba(15,23,42,0.95)' }}>
+          <div className="cart-modal-footer" style={{ borderTop: '1px solid var(--border-subtle)', background: 'rgba(15,23,42,0.95)' }}>
             <button
               className="btn-primary"
               style={{ width: '100%', height: '50px', fontSize: '15px' }}

@@ -150,8 +150,8 @@ export const TableMenuPage = ({ tableNumber, onNavigateToOrder }) => {
         ))}
       </div>
 
-      {/* Menu Dishes List */}
-      <div style={{ padding: '16px', display: 'flex', flexDirection: 'column', gap: '14px' }}>
+      {/* Menu Dishes Responsive Grid */}
+      <div className="menu-grid">
         {loading ? (
           <div style={{ textAlign: 'center', padding: '60px 0', color: 'var(--text-secondary)' }}>
             <Sparkles className="animate-spin" size={32} style={{ margin: '0 auto 12px', color: 'var(--accent-primary)' }} />
@@ -295,11 +295,11 @@ export const TableMenuPage = ({ tableNumber, onNavigateToOrder }) => {
         <div
           style={{
             position: 'fixed',
-            bottom: '16px',
+            bottom: 'calc(16px + env(safe-area-inset-bottom, 0px))',
             left: '50%',
             transform: 'translateX(-50%)',
             width: 'calc(100% - 32px)',
-            maxWidth: '448px',
+            maxWidth: '520px',
             zIndex: 60
           }}
         >

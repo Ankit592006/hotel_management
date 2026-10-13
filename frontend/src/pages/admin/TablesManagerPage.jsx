@@ -184,8 +184,8 @@ export const TablesManagerPage = () => {
         <div
           style={{
             display: 'grid',
-            gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))',
-            gap: '20px'
+            gridTemplateColumns: 'repeat(auto-fill, minmax(min(100%, 260px), 1fr))',
+            gap: '16px'
           }}
         >
           {tables.map((table) => {

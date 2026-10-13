@@ -135,6 +135,46 @@ export const AdminLayout = ({ activeTab, setActiveTab, liveOrdersCount = 0, chil
       <main style={{ flex: 1, padding: '24px', maxWidth: '1440px', width: '100%', margin: '0 auto' }}>
         {children}
       </main>
+
+      {/* Mobile Bottom Navigation Bar for SmartPhones & iOS */}
+      <nav className="admin-mobile-nav">
+        {navItems.map((item) => {
+          const Icon = item.icon;
+          const isActive = activeTab === item.id;
+
+          return (
+            <button
+              key={item.id}
+              onClick={() => setActiveTab(item.id)}
+              className={`admin-mobile-tab ${isActive ? 'active' : ''}`}
+            >
+              <Icon size={20} />
+              <span>{item.label}</span>
+              {item.badge > 0 && (
+                <span
+                  style={{
+                    position: 'absolute',
+                    top: '2px',
+                    right: '12px',
+                    background: '#ef4444',
+                    color: '#fff',
+                    fontSize: '10px',
+                    fontWeight: 800,
+                    width: '16px',
+                    height: '16px',
+                    borderRadius: '50%',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center'
+                  }}
+                >
+                  {item.badge}
+                </span>
+              )}
+            </button>
+          );
+        })}
+      </nav>
     </div>
   );
 };

@@ -192,7 +192,7 @@ export const OrderTrackingPage = ({ orderId, onBackToMenu }) => {
         </div>
       </div>
 
-      <div style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
+      <div style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '20px', maxWidth: '640px', margin: '0 auto', width: '100%' }}>
         {/* Order Status Hero Card */}
         <div
           className="glass-panel"

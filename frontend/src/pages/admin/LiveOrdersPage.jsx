@@ -237,8 +237,8 @@ export const LiveOrdersPage = ({ onOrdersCountChange }) => {
         <div
           style={{
             display: 'grid',
-            gridTemplateColumns: 'repeat(auto-fill, minmax(360px, 1fr))',
-            gap: '20px'
+            gridTemplateColumns: 'repeat(auto-fill, minmax(min(100%, 340px), 1fr))',
+            gap: '16px'
           }}
         >
           {filteredOrders.map((order) => {
