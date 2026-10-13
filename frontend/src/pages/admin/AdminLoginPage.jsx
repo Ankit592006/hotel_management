@@ -145,30 +145,11 @@ export const AdminLoginPage = ({ onLoginSuccess }) => {
           </button>
         </form>
 
-        {/* 1-Click Demo Fill */}
-        <div style={{ marginTop: '24px', paddingTop: '18px', borderTop: '1px solid var(--border-subtle)' }}>
-          <p style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '10px', textAlign: 'center' }}>
-            Quick Demo Login:
-          </p>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
-            <button
-              type="button"
-              className="btn-secondary"
-              onClick={() => fillCredentials('admin@smartserve.com', 'admin123456')}
-              style={{ fontSize: '12px', padding: '8px' }}
-            >
-              <ShieldCheck size={14} />
-              <span>Admin Demo</span>
-            </button>
-            <button
-              type="button"
-              className="btn-secondary"
-              onClick={() => fillCredentials('staff@smartserve.com', 'staff123456')}
-              style={{ fontSize: '12px', padding: '8px' }}
-            >
-              <Sparkles size={14} />
-              <span>Staff Demo</span>
-            </button>
+        {/* Authorized Access Note */}
+        <div style={{ marginTop: '24px', paddingTop: '18px', borderTop: '1px solid var(--border-subtle)', textAlign: 'center' }}>
+          <div style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', color: 'var(--text-muted)', fontSize: '12px' }}>
+            <ShieldCheck size={14} style={{ color: 'var(--accent-primary)' }} />
+            <span>Authorized Restaurant Access Only (Owner & Staff)</span>
           </div>
         </div>
       </div>
