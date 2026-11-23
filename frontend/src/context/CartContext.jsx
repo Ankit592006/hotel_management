@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
 
 const CartContext = createContext(null);
 
@@ -8,42 +8,51 @@ export const CartProvider = ({ children }) => {
   const [customerNotes, setCustomerNotes] = useState('');
   const [isCartOpen, setIsCartOpen] = useState(false);
 
-  // Load cart for table
+  // Track which table has finished hydrating from localStorage to avoid wiping saved cart
+  const hydratedTableRef = useRef(null);
+
+  // Load saved cart whenever tableNumber changes
   useEffect(() => {
-    if (tableNumber) {
-      const savedCart = localStorage.getItem(`smartserve_cart_${tableNumber}`);
-      if (savedCart) {
-        try {
-          const parsed = JSON.parse(savedCart);
-          setItems(parsed.items || []);
-          setCustomerNotes(parsed.notes || '');
-        } catch (e) {
-          console.error('Failed to parse saved cart');
-        }
-      } else {
+    if (!tableNumber) return;
+
+    hydratedTableRef.current = null;
+    const savedCart = localStorage.getItem(`smartserve_cart_${tableNumber}`);
+    if (savedCart) {
+      try {
+        const parsed = JSON.parse(savedCart);
+        setItems(Array.isArray(parsed.items) ? parsed.items : []);
+        setCustomerNotes(typeof parsed.notes === 'string' ? parsed.notes : '');
+      } catch (e) {
+        console.error('Failed to parse saved cart');
         setItems([]);
         setCustomerNotes('');
       }
+    } else {
+      setItems([]);
+      setCustomerNotes('');
     }
+    hydratedTableRef.current = tableNumber;
   }, [tableNumber]);
 
-  // Persist cart
+  // Persist cart only after the current table's saved cart has hydrated
   useEffect(() => {
-    if (tableNumber) {
-      localStorage.setItem(
-        `smartserve_cart_${tableNumber}`,
-        JSON.stringify({ items, notes: customerNotes })
-      );
-    }
+    if (!tableNumber || hydratedTableRef.current !== tableNumber) return;
+
+    localStorage.setItem(
+      `smartserve_cart_${tableNumber}`,
+      JSON.stringify({ items, notes: customerNotes })
+    );
   }, [items, customerNotes, tableNumber]);
 
   const addItem = (item) => {
     setItems((prevItems) => {
-      const existingIndex = prevItems.findIndex((i) => i._id === item._id);
-      if (existingIndex > -1) {
-        const updated = [...prevItems];
-        updated[existingIndex].quantity += 1;
-        return updated;
+      const exists = prevItems.some((i) => i._id === item._id);
+      if (exists) {
+        return prevItems.map((i) =>
+          i._id === item._id
+            ? { ...i, quantity: Math.min(50, i.quantity + 1) }
+            : i
+        );
       }
       return [
         ...prevItems,
@@ -65,17 +74,17 @@ export const CartProvider = ({ children }) => {
   };
 
   const updateQuantity = (itemId, delta) => {
-    setItems((prev) => {
-      return prev
+    setItems((prev) =>
+      prev
         .map((item) => {
           if (item._id === itemId) {
-            const newQty = item.quantity + delta;
+            const newQty = Math.min(50, item.quantity + delta);
             return newQty > 0 ? { ...item, quantity: newQty } : null;
           }
           return item;
         })
-        .filter(Boolean);
-    });
+        .filter(Boolean)
+    );
   };
 
   const updateInstructions = (itemId, instructions) => {

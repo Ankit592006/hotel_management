@@ -2,6 +2,15 @@ const crypto = require('crypto');
 const Order = require('../models/Order');
 const Payment = require('../models/Payment');
 const { getRazorpayInstance } = require('../config/razorpay');
+const { releaseTableIfSettled } = require('./orderController');
+
+const safeCompareHex = (a, b) => {
+  if (typeof a !== 'string' || typeof b !== 'string') return false;
+  const bufA = Buffer.from(a, 'utf8');
+  const bufB = Buffer.from(b, 'utf8');
+  if (bufA.length !== bufB.length) return false;
+  return crypto.timingSafeEqual(bufA, bufB);
+};
 
 // @desc    Create Razorpay Order
 // @route   POST /api/payments/create-order
@@ -25,6 +34,13 @@ const createRazorpayOrder = async (req, res, next) => {
       });
     }
 
+    if (order.orderStatus === 'Cancelled') {
+      return res.status(400).json({
+        success: false,
+        message: 'Cannot initiate payment for a cancelled order'
+      });
+    }
+
     if (order.paymentStatus === 'Paid') {
       return res.status(400).json({
         success: false,
@@ -37,7 +53,6 @@ const createRazorpayOrder = async (req, res, next) => {
     let razorpayOrderId;
 
     if (razorpay) {
-      // Real or Test API Call to Razorpay
       const options = {
         amount: amountInPaise,
         currency: 'INR',
@@ -52,16 +67,13 @@ const createRazorpayOrder = async (req, res, next) => {
       const razorpayOrder = await razorpay.orders.create(options);
       razorpayOrderId = razorpayOrder.id;
     } else {
-      // Mock/Simulated Razorpay Order ID for sandbox/demo test runs
       razorpayOrderId = `order_sim_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
     }
 
-    // Save razorpayOrderId to Order
     order.razorpayOrderId = razorpayOrderId;
     order.paymentMethod = 'Razorpay';
     await order.save();
 
-    // Create Payment tracking record
     await Payment.findOneAndUpdate(
       { orderId: order._id },
       {
@@ -117,7 +129,22 @@ const verifyPayment = async (req, res, next) => {
       });
     }
 
-    // Check if order already confirmed to avoid duplicate processing
+    if (order.orderStatus === 'Cancelled') {
+      return res.status(400).json({
+        success: false,
+        message: 'Cannot verify payment for a cancelled order'
+      });
+    }
+
+    // Prevent order-ID swap fraud: ensure razorpay_order_id belongs strictly to THIS order
+    if (!order.razorpayOrderId || order.razorpayOrderId !== razorpay_order_id) {
+      return res.status(400).json({
+        success: false,
+        message: 'Payment verification failed: Razorpay order ID does not match this order'
+      });
+    }
+
+    // Idempotency check
     if (order.paymentStatus === 'Paid') {
       return res.json({
         success: true,
@@ -135,14 +162,12 @@ const verifyPayment = async (req, res, next) => {
         .update(`${razorpay_order_id}|${razorpay_payment_id}`)
         .digest('hex');
 
-      isValidSignature = (generatedSignature === razorpay_signature);
+      isValidSignature = safeCompareHex(generatedSignature, razorpay_signature);
     } else if (!secret && razorpay_order_id.startsWith('order_sim_')) {
-      // In simulated demo mode without Razorpay credentials, accept verified simulation
       isValidSignature = true;
     }
 
     if (!isValidSignature) {
-      // Record failed payment attempt
       await Payment.findOneAndUpdate(
         { razorpayOrderId: razorpay_order_id },
         {
@@ -158,13 +183,12 @@ const verifyPayment = async (req, res, next) => {
       });
     }
 
-    // Signature verified! Update Order
+    // Signature & ownership verified
     order.paymentStatus = 'Paid';
     order.paymentMethod = 'Razorpay';
     order.razorpayPaymentId = razorpay_payment_id;
     await order.save();
 
-    // Update Payment record
     await Payment.findOneAndUpdate(
       { razorpayOrderId: razorpay_order_id },
       {
@@ -175,8 +199,9 @@ const verifyPayment = async (req, res, next) => {
       }
     );
 
-    // Broadcast payment confirmation to customer & admin
     const io = req.app.get('io');
+    await releaseTableIfSettled(order.tableNumber, io);
+
     if (io) {
       io.to(`order-${order._id.toString()}`).emit('payment_success', {
         orderId: order._id,
@@ -198,41 +223,40 @@ const verifyPayment = async (req, res, next) => {
 
 // @desc    Razorpay Webhook for asynchronous server-to-server confirmation
 // @route   POST /api/payments/webhook
-// @access  Public (Validated with webhook secret signature)
+// @access  Public (Strictly validated with webhook secret signature)
 const razorpayWebhook = async (req, res) => {
   try {
     const webhookSecret = process.env.RAZORPAY_WEBHOOK_SECRET;
+    if (!webhookSecret) {
+      return res.status(503).json({ message: 'Webhook secret is not configured on server' });
+    }
+
     const receivedSignature = req.headers['x-razorpay-signature'];
+    if (!receivedSignature) {
+      return res.status(400).json({ message: 'Missing webhook signature header' });
+    }
 
-    // If webhook secret configured, strictly verify signature
-    if (webhookSecret) {
-      if (!receivedSignature) {
-        return res.status(400).json({ message: 'Missing webhook signature header' });
-      }
+    const bodyPayload = req.rawBody || JSON.stringify(req.body);
+    const expectedSignature = crypto
+      .createHmac('sha256', webhookSecret)
+      .update(bodyPayload)
+      .digest('hex');
 
-      // req.rawBody or JSON stringified body
-      const bodyPayload = req.rawBody || JSON.stringify(req.body);
-      const expectedSignature = crypto
-        .createHmac('sha256', webhookSecret)
-        .update(bodyPayload)
-        .digest('hex');
-
-      if (expectedSignature !== receivedSignature) {
-        return res.status(400).json({ message: 'Invalid webhook signature' });
-      }
+    if (!safeCompareHex(expectedSignature, receivedSignature)) {
+      return res.status(400).json({ message: 'Invalid webhook signature' });
     }
 
     const event = req.body.event;
     const payload = req.body.payload;
 
     if (event === 'payment.captured' || event === 'order.paid') {
-      const paymentEntity = payload.payment ? payload.payment.entity : null;
+      const paymentEntity = payload && payload.payment ? payload.payment.entity : null;
       const razorpayOrderId = paymentEntity ? paymentEntity.order_id : null;
       const razorpayPaymentId = paymentEntity ? paymentEntity.id : null;
 
       if (razorpayOrderId) {
         const order = await Order.findOne({ razorpayOrderId });
-        if (order && order.paymentStatus !== 'Paid') {
+        if (order && order.paymentStatus !== 'Paid' && order.orderStatus !== 'Cancelled') {
           order.paymentStatus = 'Paid';
           order.razorpayPaymentId = razorpayPaymentId;
           await order.save();
@@ -248,6 +272,8 @@ const razorpayWebhook = async (req, res) => {
           );
 
           const io = req.app.get('io');
+          await releaseTableIfSettled(order.tableNumber, io);
+
           if (io) {
             io.to(`order-${order._id.toString()}`).emit('payment_success', {
               orderId: order._id,
@@ -260,7 +286,6 @@ const razorpayWebhook = async (req, res) => {
       }
     }
 
-    // Always respond 200 OK to Razorpay webhook immediately
     res.status(200).json({ status: 'ok' });
   } catch (error) {
     console.error('Webhook error:', error);

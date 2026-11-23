@@ -6,13 +6,14 @@ import {
   Award,
   CreditCard,
   PieChart,
-  Calendar,
-  Sparkles,
+  Loader2,
   RefreshCw
 } from 'lucide-react';
 import { api } from '../../api/client';
+import { useToast } from '../../components/ToastProvider';
 
 export const AnalyticsPage = () => {
+  const toast = useToast();
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
 
@@ -24,7 +25,7 @@ export const AnalyticsPage = () => {
         setData(res.data);
       }
     } catch (err) {
-      console.error('Failed to load analytics:', err);
+      toast.error('Failed to load sales analytics.');
     } finally {
       setLoading(false);
     }
@@ -36,8 +37,8 @@ export const AnalyticsPage = () => {
 
   if (loading) {
     return (
-      <div style={{ textAlign: 'center', padding: '60px', color: 'var(--text-secondary)' }}>
-        <Sparkles className="animate-spin" size={32} style={{ color: 'var(--accent-primary)', margin: '0 auto 12px' }} />
+      <div style={{ textAlign: 'center', padding: '60px 20px', color: 'var(--text-secondary)' }}>
+        <Loader2 className="animate-spin" size={32} style={{ color: 'var(--accent-primary)', margin: '0 auto 12px' }} />
         <p>Crunching sales analytics and order numbers...</p>
       </div>
     );
@@ -88,29 +89,20 @@ export const AnalyticsPage = () => {
   return (
     <div>
       {/* Header */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
+      <div className="page-header">
         <div>
-          <h1 style={{ fontSize: '26px', fontWeight: 800 }}>Restaurant Sales & Insights</h1>
-          <p style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>
-            Financial metrics, dish popularity, and digital payments performance
-          </p>
+          <h1 className="page-title">Restaurant Sales & Insights</h1>
+          <p className="page-subtitle">Financial metrics, dish popularity, and digital payments performance</p>
         </div>
 
-        <button className="btn-secondary" onClick={fetchAnalytics}>
+        <button type="button" className="btn-secondary" onClick={fetchAnalytics}>
           <RefreshCw size={16} />
           <span>Refresh</span>
         </button>
       </div>
 
       {/* 4 Hero Stats */}
-      <div
-        style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))',
-          gap: '16px',
-          marginBottom: '24px'
-        }}
-      >
+      <div className="analytics-kpi-grid">
         {statCards.map((card, idx) => {
           const Icon = card.icon;
           return (
@@ -118,14 +110,14 @@ export const AnalyticsPage = () => {
               key={idx}
               className="glass-panel"
               style={{
-                padding: '20px',
+                padding: '18px 20px',
                 display: 'flex',
                 flexDirection: 'column',
                 gap: '10px',
-                backgroundColor: 'rgba(20, 28, 48, 0.85)'
+                backgroundColor: 'rgba(20, 28, 48, 0.88)'
               }}
             >
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px' }}>
                 <span style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-secondary)' }}>
                   {card.title}
                 </span>
@@ -138,7 +130,8 @@ export const AnalyticsPage = () => {
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'center',
-                    color: card.color
+                    color: card.color,
+                    flexShrink: 0
                   }}
                 >
                   <Icon size={18} />
@@ -146,7 +139,7 @@ export const AnalyticsPage = () => {
               </div>
 
               <div>
-                <div style={{ fontSize: '28px', fontWeight: 800, color: 'var(--text-primary)', letterSpacing: '-0.02em' }}>
+                <div style={{ fontSize: '26px', fontWeight: 800, color: 'var(--text-primary)', letterSpacing: '-0.02em' }}>
                   {card.value}
                 </div>
                 <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '2px' }}>
@@ -158,10 +151,10 @@ export const AnalyticsPage = () => {
         })}
       </div>
 
-      {/* Two Column Section */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))', gap: '20px' }}>
+      {/* Two Column Section (Zero mobile overflow) */}
+      <div className="analytics-split-grid">
         {/* Popular Dishes */}
-        <div className="glass-panel" style={{ padding: '22px' }}>
+        <div className="glass-panel" style={{ padding: '20px' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '18px' }}>
             <Award size={20} style={{ color: 'var(--accent-primary)' }} />
             <h2 style={{ fontSize: '16px', fontWeight: 700 }}>Top Selling Dishes</h2>
@@ -177,9 +170,9 @@ export const AnalyticsPage = () => {
 
                 return (
                   <div key={i}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', marginBottom: '4px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: '8px', flexWrap: 'wrap', fontSize: '13px', marginBottom: '5px' }}>
                       <span style={{ fontWeight: 700 }}>{dish._id}</span>
-                      <span style={{ color: 'var(--accent-primary)', fontWeight: 700 }}>
+                      <span style={{ color: 'var(--accent-primary)', fontWeight: 700, fontSize: '12px', whiteSpace: 'nowrap' }}>
                         {dish.totalOrdered} orders (₹{dish.revenueGenerated})
                       </span>
                     </div>
@@ -201,14 +194,14 @@ export const AnalyticsPage = () => {
         </div>
 
         {/* Payment & Status Distribution */}
-        <div className="glass-panel" style={{ padding: '22px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
+        <div className="glass-panel" style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
           <div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '14px' }}>
               <PieChart size={20} style={{ color: 'var(--accent-primary)' }} />
               <h2 style={{ fontSize: '16px', fontWeight: 700 }}>Payment Method Split</h2>
             </div>
 
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+            <div className="responsive-form-grid" style={{ gap: '10px' }}>
               <div style={{ padding: '14px', borderRadius: 'var(--radius-md)', background: 'rgba(245, 158, 11, 0.1)', border: '1px solid rgba(245, 158, 11, 0.25)' }}>
                 <div style={{ fontSize: '12px', color: 'var(--accent-primary)', fontWeight: 600 }}>Razorpay Online</div>
                 <div style={{ fontSize: '22px', fontWeight: 800, marginTop: '4px' }}>{paymentBreakdown.Razorpay || 0}</div>
@@ -227,21 +220,21 @@ export const AnalyticsPage = () => {
             <h3 style={{ fontSize: '14px', fontWeight: 700, color: 'var(--text-secondary)', marginBottom: '10px' }}>
               Kitchen Workflow Pipeline
             </h3>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '8px', textAlign: 'center' }}>
-              <div style={{ padding: '10px', borderRadius: 'var(--radius-md)', background: 'rgba(245, 158, 11, 0.15)' }}>
-                <div style={{ fontSize: '18px', fontWeight: 800, color: '#f59e0b' }}>{statusCounts.Pending || 0}</div>
+            <div className="pipeline-grid">
+              <div style={{ padding: '10px 8px', borderRadius: 'var(--radius-md)', background: 'rgba(245, 158, 11, 0.15)' }}>
+                <div style={{ fontSize: '18px', fontWeight: 800, color: '#fbbf24' }}>{statusCounts.Pending || 0}</div>
                 <div style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>Pending</div>
               </div>
-              <div style={{ padding: '10px', borderRadius: 'var(--radius-md)', background: 'rgba(139, 92, 246, 0.15)' }}>
+              <div style={{ padding: '10px 8px', borderRadius: 'var(--radius-md)', background: 'rgba(139, 92, 246, 0.15)' }}>
                 <div style={{ fontSize: '18px', fontWeight: 800, color: '#a78bfa' }}>{statusCounts.Preparing || 0}</div>
                 <div style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>Cooking</div>
               </div>
-              <div style={{ padding: '10px', borderRadius: 'var(--radius-md)', background: 'rgba(16, 185, 129, 0.15)' }}>
+              <div style={{ padding: '10px 8px', borderRadius: 'var(--radius-md)', background: 'rgba(16, 185, 129, 0.15)' }}>
                 <div style={{ fontSize: '18px', fontWeight: 800, color: '#34d399' }}>{statusCounts.Ready || 0}</div>
                 <div style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>Ready</div>
               </div>
-              <div style={{ padding: '10px', borderRadius: 'var(--radius-md)', background: 'rgba(100, 116, 139, 0.15)' }}>
-                <div style={{ fontSize: '18px', fontWeight: 800, color: '#94a3b8' }}>{statusCounts.Served || 0}</div>
+              <div style={{ padding: '10px 8px', borderRadius: 'var(--radius-md)', background: 'rgba(100, 116, 139, 0.18)' }}>
+                <div style={{ fontSize: '18px', fontWeight: 800, color: '#cbd5e1' }}>{statusCounts.Served || 0}</div>
                 <div style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>Served</div>
               </div>
             </div>

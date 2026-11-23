@@ -6,7 +6,7 @@ const MenuItem = require('../models/MenuItem');
 const getMenuItems = async (req, res, next) => {
   try {
     const { category, isVeg, isAvailable, search } = req.query;
-    let query = {};
+    const query = {};
 
     if (category && category !== 'All') {
       query.category = category;
@@ -91,9 +91,14 @@ const createMenuItem = async (req, res, next) => {
       imageUrl: imageUrl || undefined,
       isVeg: isVeg !== undefined ? Boolean(isVeg) : true,
       isAvailable: isAvailable !== undefined ? Boolean(isAvailable) : true,
-      preparationTime: preparationTime ? Number(preparationTime) : 15,
-      spicyLevel: spicyLevel ? Number(spicyLevel) : 1
+      preparationTime: preparationTime !== undefined ? Number(preparationTime) : 15,
+      spicyLevel: spicyLevel !== undefined ? Number(spicyLevel) : 1
     });
+
+    const io = req.app.get('io');
+    if (io) {
+      io.emit('menu_item_created', item);
+    }
 
     res.status(201).json({
       success: true,
@@ -104,14 +109,40 @@ const createMenuItem = async (req, res, next) => {
   }
 };
 
-// @desc    Update menu item
+// @desc    Update menu item (whitelisted fields only)
 // @route   PUT /api/menu/:id
 // @access  Private (Admin)
 const updateMenuItem = async (req, res, next) => {
   try {
+    const allowedFields = [
+      'name',
+      'description',
+      'price',
+      'category',
+      'imageUrl',
+      'isVeg',
+      'isAvailable',
+      'preparationTime',
+      'spicyLevel',
+      'rating'
+    ];
+
+    const updates = {};
+    for (const field of allowedFields) {
+      if (req.body[field] !== undefined) {
+        if (['price', 'preparationTime', 'spicyLevel', 'rating'].includes(field)) {
+          updates[field] = Number(req.body[field]);
+        } else if (['isVeg', 'isAvailable'].includes(field)) {
+          updates[field] = Boolean(req.body[field]);
+        } else {
+          updates[field] = req.body[field];
+        }
+      }
+    }
+
     const item = await MenuItem.findByIdAndUpdate(
       req.params.id,
-      req.body,
+      updates,
       { new: true, runValidators: true }
     );
 
@@ -120,6 +151,11 @@ const updateMenuItem = async (req, res, next) => {
         success: false,
         message: 'Menu item not found'
       });
+    }
+
+    const io = req.app.get('io');
+    if (io) {
+      io.emit('menu_item_updated', item);
     }
 
     res.json({
@@ -133,7 +169,7 @@ const updateMenuItem = async (req, res, next) => {
 
 // @desc    Toggle item availability
 // @route   PATCH /api/menu/:id/availability
-// @access  Private (Admin)
+// @access  Private (Admin / Staff)
 const toggleAvailability = async (req, res, next) => {
   try {
     const item = await MenuItem.findById(req.params.id);
@@ -147,7 +183,6 @@ const toggleAvailability = async (req, res, next) => {
     item.isAvailable = !item.isAvailable;
     await item.save();
 
-    // Broadcast change via socket if app instance is available
     const io = req.app.get('io');
     if (io) {
       io.emit('menu_item_updated', item);
@@ -173,6 +208,11 @@ const deleteMenuItem = async (req, res, next) => {
         success: false,
         message: 'Menu item not found'
       });
+    }
+
+    const io = req.app.get('io');
+    if (io) {
+      io.emit('menu_item_deleted', { _id: item._id });
     }
 
     res.json({

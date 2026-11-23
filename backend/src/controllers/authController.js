@@ -9,9 +9,9 @@ const generateToken = (id) => {
   );
 };
 
-// @desc    Register admin or staff
+// @desc    Register admin or staff (Admin only)
 // @route   POST /api/auth/register
-// @access  Public (protected in strict prod or initial setup)
+// @access  Private (Admin)
 const register = async (req, res, next) => {
   try {
     const { name, email, password, role } = req.body;
@@ -23,7 +23,8 @@ const register = async (req, res, next) => {
       });
     }
 
-    const userExists = await User.findOne({ email });
+    const normalizedEmail = String(email).trim().toLowerCase();
+    const userExists = await User.findOne({ email: normalizedEmail });
     if (userExists) {
       return res.status(400).json({
         success: false,
@@ -31,11 +32,13 @@ const register = async (req, res, next) => {
       });
     }
 
+    const assignedRole = role === 'admin' ? 'admin' : 'staff';
+
     const user = await User.create({
-      name,
-      email,
+      name: String(name).trim(),
+      email: normalizedEmail,
       password,
-      role: role || 'admin'
+      role: assignedRole
     });
 
     const token = generateToken(user._id);
@@ -69,7 +72,8 @@ const login = async (req, res, next) => {
       });
     }
 
-    const user = await User.findOne({ email });
+    const normalizedEmail = String(email).trim().toLowerCase();
+    const user = await User.findOne({ email: normalizedEmail });
     if (!user) {
       return res.status(401).json({
         success: false,

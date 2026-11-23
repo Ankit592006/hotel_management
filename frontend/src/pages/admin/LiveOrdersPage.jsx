@@ -6,27 +6,28 @@ import {
   UtensilsCrossed,
   CheckCircle2,
   XCircle,
-  CreditCard,
-  Banknote,
   Volume2,
-  Filter,
   Sparkles,
   RefreshCw,
-  AlertTriangle
+  X
 } from 'lucide-react';
 import { useSocket } from '../../context/SocketContext';
+import { useToast } from '../../components/ToastProvider';
+import { ConfirmDialog } from '../../components/ConfirmDialog';
 import { api } from '../../api/client';
 
 const STATUS_FILTERS = ['Active', 'Pending', 'Accepted', 'Preparing', 'Ready', 'Served', 'All'];
 
 export const LiveOrdersPage = ({ onOrdersCountChange }) => {
   const { socket, joinAdmin, playChime } = useSocket();
+  const toast = useToast();
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState('Active');
   const [newOrderAlert, setNewOrderAlert] = useState(null);
+  const [busyOrderId, setBusyOrderId] = useState(null);
+  const [cancelTarget, setCancelTarget] = useState(null);
 
-  // Fetch initial orders
   const fetchOrders = async () => {
     try {
       setLoading(true);
@@ -35,7 +36,7 @@ export const LiveOrdersPage = ({ onOrdersCountChange }) => {
         setOrders(res.data);
       }
     } catch (err) {
-      console.error('Failed to fetch orders:', err);
+      toast.error('Failed to fetch live orders.');
     } finally {
       setLoading(false);
     }
@@ -46,7 +47,6 @@ export const LiveOrdersPage = ({ onOrdersCountChange }) => {
     joinAdmin();
   }, []);
 
-  // Update badge count
   useEffect(() => {
     const activeCount = orders.filter((o) =>
       ['Pending', 'Accepted', 'Preparing', 'Ready'].includes(o.orderStatus)
@@ -54,17 +54,12 @@ export const LiveOrdersPage = ({ onOrdersCountChange }) => {
     if (onOrdersCountChange) onOrdersCountChange(activeCount);
   }, [orders, onOrdersCountChange]);
 
-  // Socket.IO event listeners for live incoming orders
   useEffect(() => {
     if (!socket) return;
 
     const handleNewOrder = (data) => {
-      console.log('🔔 Live Order Received in Admin:', data);
       playChime();
-
       setOrders((prev) => [data.order, ...prev]);
-
-      // Trigger visual banner
       setNewOrderAlert(`New Order #${data.order.orderNumber} for Table ${data.order.tableNumber}!`);
       setTimeout(() => setNewOrderAlert(null), 8000);
     };
@@ -84,35 +79,40 @@ export const LiveOrdersPage = ({ onOrdersCountChange }) => {
     };
   }, [socket, playChime]);
 
-  // Status progression action
   const handleUpdateStatus = async (orderId, newStatus) => {
     try {
+      setBusyOrderId(orderId);
       const res = await api.updateOrderStatus(orderId, newStatus);
       if (res.success) {
         setOrders((prev) =>
           prev.map((o) => (o._id === orderId ? { ...o, orderStatus: newStatus } : o))
         );
+        toast.success(`Order marked as ${newStatus}`);
       }
     } catch (err) {
-      alert(`Failed to update status: ${err.message}`);
+      toast.error(`Failed to update status: ${err.message}`);
+    } finally {
+      setBusyOrderId(null);
     }
   };
 
-  // Payment status toggle (e.g. Counter Payment cash received)
   const handleMarkPaid = async (orderId) => {
     try {
+      setBusyOrderId(orderId);
       const res = await api.updatePaymentStatus(orderId, 'Paid');
       if (res.success) {
         setOrders((prev) =>
           prev.map((o) => (o._id === orderId ? { ...o, paymentStatus: 'Paid' } : o))
         );
+        toast.success('Payment marked as Paid');
       }
     } catch (err) {
-      alert(`Failed to update payment status: ${err.message}`);
+      toast.error(`Failed to update payment status: ${err.message}`);
+    } finally {
+      setBusyOrderId(null);
     }
   };
 
-  // Filter orders
   const filteredOrders = orders.filter((order) => {
     if (filter === 'Active') {
       return ['Pending', 'Accepted', 'Preparing', 'Ready'].includes(order.orderStatus);
@@ -144,21 +144,19 @@ export const LiveOrdersPage = ({ onOrdersCountChange }) => {
 
   return (
     <div>
-      {/* Top Controls & Banner */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', flexWrap: 'wrap', gap: '12px' }}>
+      {/* Top Controls */}
+      <div className="page-header">
         <div>
-          <h1 style={{ fontSize: '26px', fontWeight: 800 }}>Live Kitchen & Floor Board</h1>
-          <p style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>
-            Real-time table orders feed • Instant status dispatch
-          </p>
+          <h1 className="page-title">Live Kitchen & Floor Board</h1>
+          <p className="page-subtitle">Real-time table orders feed • Instant status dispatch</p>
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-          <button className="btn-secondary" onClick={playChime} title="Test Sound Chime">
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+          <button type="button" className="btn-secondary" onClick={playChime} title="Test Sound Chime">
             <Volume2 size={16} />
             <span>Test Chime</span>
           </button>
-          <button className="btn-secondary" onClick={fetchOrders} title="Refresh">
+          <button type="button" className="btn-secondary" onClick={fetchOrders} title="Refresh">
             <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
             <span>Refresh</span>
           </button>
@@ -170,49 +168,49 @@ export const LiveOrdersPage = ({ onOrdersCountChange }) => {
         <div
           className="glass-panel pulse-glow animate-slide-up"
           style={{
-            marginBottom: '20px',
-            padding: '14px 20px',
-            background: 'linear-gradient(90deg, rgba(245, 158, 11, 0.25) 0%, rgba(234, 88, 12, 0.2) 100%)',
+            marginBottom: '18px',
+            padding: '14px 18px',
+            background: 'linear-gradient(90deg, rgba(245, 158, 11, 0.24) 0%, rgba(234, 88, 12, 0.18) 100%)',
             border: '1.5px solid var(--accent-primary)',
             display: 'flex',
             alignItems: 'center',
-            justifyContent: 'space-between'
+            justifyContent: 'space-between',
+            gap: '12px'
           }}
         >
-          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-            <Sparkles size={22} style={{ color: 'var(--accent-primary)' }} />
-            <span style={{ fontSize: '15px', fontWeight: 800, color: '#f8fafc' }}>{newOrderAlert}</span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', minWidth: 0 }}>
+            <Sparkles size={20} style={{ color: 'var(--accent-primary)', flexShrink: 0 }} />
+            <span style={{ fontSize: '14px', fontWeight: 800, color: '#f8fafc' }}>{newOrderAlert}</span>
           </div>
-          <button className="btn-icon" onClick={() => setNewOrderAlert(null)} style={{ width: '32px', height: '32px' }}>
-            ✕
+          <button
+            type="button"
+            className="btn-icon"
+            onClick={() => setNewOrderAlert(null)}
+            aria-label="Dismiss alert"
+            style={{ width: '32px', height: '32px' }}
+          >
+            <X size={16} />
           </button>
         </div>
       )}
 
       {/* Filter Tabs */}
       <div
+        className="hide-scrollbar"
         style={{
           display: 'flex',
           gap: '8px',
           overflowX: 'auto',
-          marginBottom: '24px',
+          marginBottom: '20px',
           paddingBottom: '4px'
         }}
       >
         {STATUS_FILTERS.map((s) => (
           <button
             key={s}
+            type="button"
             onClick={() => setFilter(s)}
-            style={{
-              padding: '8px 18px',
-              borderRadius: 'var(--radius-full)',
-              background: filter === s ? 'var(--accent-gradient)' : 'rgba(255, 255, 255, 0.05)',
-              color: filter === s ? '#0f172a' : 'var(--text-secondary)',
-              fontWeight: 700,
-              fontSize: '13px',
-              border: `1px solid ${filter === s ? 'transparent' : 'var(--border-subtle)'}`,
-              transition: 'all 0.2s ease'
-            }}
+            className={`category-pill ${filter === s ? 'active' : ''}`}
           >
             {s} {s === 'Active' ? `(${orders.filter((o) => ['Pending', 'Accepted', 'Preparing', 'Ready'].includes(o.orderStatus)).length})` : ''}
           </button>
@@ -221,15 +219,8 @@ export const LiveOrdersPage = ({ onOrdersCountChange }) => {
 
       {/* Orders Grid */}
       {filteredOrders.length === 0 ? (
-        <div
-          className="glass-panel"
-          style={{
-            padding: '60px 20px',
-            textAlign: 'center',
-            color: 'var(--text-secondary)'
-          }}
-        >
-          <UtensilsCrossed size={42} style={{ margin: '0 auto 14px', color: 'var(--text-muted)' }} />
+        <div className="glass-panel" style={{ padding: '56px 20px', textAlign: 'center', color: 'var(--text-secondary)' }}>
+          <UtensilsCrossed size={40} style={{ margin: '0 auto 14px', color: 'var(--text-muted)' }} />
           <h3 style={{ fontSize: '16px', fontWeight: 700, marginBottom: '6px' }}>No orders in "{filter}"</h3>
           <p style={{ fontSize: '13px' }}>Incoming orders will appear here automatically with live audio alerts.</p>
         </div>
@@ -237,38 +228,39 @@ export const LiveOrdersPage = ({ onOrdersCountChange }) => {
         <div
           style={{
             display: 'grid',
-            gridTemplateColumns: 'repeat(auto-fill, minmax(min(100%, 340px), 1fr))',
+            gridTemplateColumns: 'repeat(auto-fill, minmax(min(100%, 330px), 1fr))',
             gap: '16px'
           }}
         >
           {filteredOrders.map((order) => {
             const statusClass = getStatusColor(order.orderStatus);
+            const isBusy = busyOrderId === order._id;
 
             return (
               <div
                 key={order._id}
                 className="glass-panel"
                 style={{
-                  padding: '20px',
+                  padding: '18px',
                   display: 'flex',
                   flexDirection: 'column',
                   gap: '14px',
                   borderTop: `4px solid var(--status-${statusClass})`,
-                  backgroundColor: 'rgba(20, 28, 48, 0.85)'
+                  backgroundColor: 'rgba(20, 28, 48, 0.88)'
                 }}
               >
                 {/* Header: Table & Status */}
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '8px', flexWrap: 'wrap' }}>
                   <div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginBottom: '4px' }}>
                       <span
                         style={{
                           background: 'var(--accent-gradient)',
                           color: '#0f172a',
-                          fontSize: '15px',
+                          fontSize: '14px',
                           fontWeight: 800,
-                          padding: '4px 10px',
-                          borderRadius: 'var(--radius-md)'
+                          padding: '3px 10px',
+                          borderRadius: 'var(--radius-sm)'
                         }}
                       >
                         TABLE #{order.tableNumber}
@@ -278,14 +270,12 @@ export const LiveOrdersPage = ({ onOrdersCountChange }) => {
                       </span>
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '12px', color: 'var(--text-muted)' }}>
-                      <Clock size={13} />
+                      <Clock size={12} />
                       <span>{getTimeAgo(order.createdAt)}</span>
                     </div>
                   </div>
 
-                  <span className={`status-pill ${statusClass}`}>
-                    {order.orderStatus}
-                  </span>
+                  <span className={`status-pill ${statusClass}`}>{order.orderStatus}</span>
                 </div>
 
                 {/* Customer Overall Notes */}
@@ -293,7 +283,7 @@ export const LiveOrdersPage = ({ onOrdersCountChange }) => {
                   <div
                     style={{
                       background: 'rgba(245, 158, 11, 0.1)',
-                      border: '1px dashed rgba(245, 158, 11, 0.3)',
+                      border: '1px dashed rgba(245, 158, 11, 0.32)',
                       padding: '8px 12px',
                       borderRadius: 'var(--radius-md)',
                       fontSize: '12px',
@@ -307,7 +297,7 @@ export const LiveOrdersPage = ({ onOrdersCountChange }) => {
                 {/* Items List */}
                 <div
                   style={{
-                    background: 'rgba(0, 0, 0, 0.25)',
+                    background: 'rgba(0, 0, 0, 0.26)',
                     padding: '12px 14px',
                     borderRadius: 'var(--radius-md)',
                     display: 'flex',
@@ -317,17 +307,19 @@ export const LiveOrdersPage = ({ onOrdersCountChange }) => {
                 >
                   {order.items?.map((item, idx) => (
                     <div key={idx} style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '13px' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '8px', fontSize: '13px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0 }}>
                           <span className={`diet-badge ${item.isVeg ? 'veg' : 'non-veg'}`} />
                           <span style={{ fontWeight: 700 }}>
                             {item.quantity} × {item.name}
                           </span>
                         </div>
-                        <span style={{ color: 'var(--text-secondary)' }}>₹{item.price * item.quantity}</span>
+                        <span style={{ color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
+                          ₹{item.price * item.quantity}
+                        </span>
                       </div>
                       {item.specialInstructions && (
-                        <span style={{ fontSize: '11px', color: 'var(--accent-primary)', paddingLeft: '22px', fontStyle: 'italic' }}>
+                        <span style={{ fontSize: '11px', color: 'var(--accent-primary)', paddingLeft: '24px', fontStyle: 'italic' }}>
                           ↳ Req: {item.specialInstructions}
                         </span>
                       )}
@@ -335,13 +327,15 @@ export const LiveOrdersPage = ({ onOrdersCountChange }) => {
                   ))}
                 </div>
 
-                {/* Bill & Payment Row */}
+                {/* Bill & Payment Row (wraps cleanly on narrow screens) */}
                 <div
                   style={{
                     display: 'flex',
                     justifyContent: 'space-between',
                     alignItems: 'center',
-                    paddingTop: '6px',
+                    flexWrap: 'wrap',
+                    gap: '8px',
+                    paddingTop: '8px',
                     borderTop: '1px solid var(--border-subtle)',
                     fontSize: '13px'
                   }}
@@ -351,8 +345,7 @@ export const LiveOrdersPage = ({ onOrdersCountChange }) => {
                     <strong style={{ fontSize: '15px', color: 'var(--text-primary)' }}>₹{order.totalAmount}</strong>
                   </div>
 
-                  {/* Payment Badge & Mark Paid button */}
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
                     {order.paymentStatus === 'Paid' ? (
                       <span
                         style={{
@@ -360,7 +353,7 @@ export const LiveOrdersPage = ({ onOrdersCountChange }) => {
                           fontWeight: 700,
                           color: 'var(--veg-color)',
                           background: 'var(--veg-bg)',
-                          padding: '3px 8px',
+                          padding: '4px 9px',
                           borderRadius: 'var(--radius-full)'
                         }}
                       >
@@ -372,23 +365,25 @@ export const LiveOrdersPage = ({ onOrdersCountChange }) => {
                           style={{
                             fontSize: '11px',
                             fontWeight: 700,
-                            color: '#f59e0b',
-                            background: 'rgba(245, 158, 11, 0.15)',
-                            padding: '3px 8px',
+                            color: '#fbbf24',
+                            background: 'rgba(245, 158, 11, 0.16)',
+                            padding: '4px 9px',
                             borderRadius: 'var(--radius-full)'
                           }}
                         >
                           UNPAID ({order.paymentMethod})
                         </span>
                         <button
+                          type="button"
+                          disabled={isBusy}
                           onClick={() => handleMarkPaid(order._id)}
                           style={{
                             fontSize: '11px',
                             fontWeight: 700,
-                            color: '#fff',
+                            color: '#ffffff',
                             background: 'rgba(34, 197, 94, 0.25)',
-                            border: '1px solid rgba(34, 197, 94, 0.4)',
-                            padding: '3px 8px',
+                            border: '1px solid rgba(34, 197, 94, 0.45)',
+                            padding: '4px 10px',
                             borderRadius: 'var(--radius-sm)'
                           }}
                           title="Mark paid in cash/card at counter"
@@ -401,10 +396,12 @@ export const LiveOrdersPage = ({ onOrdersCountChange }) => {
                 </div>
 
                 {/* Progression Action Buttons */}
-                <div style={{ display: 'flex', gap: '8px', marginTop: '6px' }}>
+                <div style={{ display: 'flex', gap: '8px', marginTop: '2px' }}>
                   {order.orderStatus === 'Pending' && (
                     <button
+                      type="button"
                       className="btn-primary"
+                      disabled={isBusy}
                       onClick={() => handleUpdateStatus(order._id, 'Accepted')}
                       style={{ flex: 1, padding: '10px' }}
                     >
@@ -415,7 +412,9 @@ export const LiveOrdersPage = ({ onOrdersCountChange }) => {
 
                   {order.orderStatus === 'Accepted' && (
                     <button
+                      type="button"
                       className="btn-primary"
+                      disabled={isBusy}
                       onClick={() => handleUpdateStatus(order._id, 'Preparing')}
                       style={{ flex: 1, padding: '10px' }}
                     >
@@ -426,20 +425,24 @@ export const LiveOrdersPage = ({ onOrdersCountChange }) => {
 
                   {order.orderStatus === 'Preparing' && (
                     <button
+                      type="button"
                       className="btn-primary"
+                      disabled={isBusy}
                       onClick={() => handleUpdateStatus(order._id, 'Ready')}
-                      style={{ flex: 1, padding: '10px', background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)' }}
+                      style={{ flex: 1, padding: '10px', background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)', color: '#ffffff' }}
                     >
                       <UtensilsCrossed size={16} />
-                      <span>Mark Ready to Serve</span>
+                      <span>Mark Ready</span>
                     </button>
                   )}
 
                   {order.orderStatus === 'Ready' && (
                     <button
+                      type="button"
                       className="btn-primary"
+                      disabled={isBusy}
                       onClick={() => handleUpdateStatus(order._id, 'Served')}
-                      style={{ flex: 1, padding: '10px', background: 'linear-gradient(135deg, #64748b 0%, #475569 100%)' }}
+                      style={{ flex: 1, padding: '10px', background: 'linear-gradient(135deg, #64748b 0%, #475569 100%)', color: '#ffffff' }}
                     >
                       <CheckCircle2 size={16} />
                       <span>Mark Served</span>
@@ -448,14 +451,13 @@ export const LiveOrdersPage = ({ onOrdersCountChange }) => {
 
                   {order.orderStatus !== 'Served' && order.orderStatus !== 'Cancelled' && (
                     <button
+                      type="button"
                       className="btn-secondary"
-                      onClick={() => {
-                        if (confirm(`Are you sure you want to cancel Order #${order.orderNumber}?`)) {
-                          handleUpdateStatus(order._id, 'Cancelled');
-                        }
-                      }}
-                      style={{ color: '#ef4444', borderColor: 'rgba(239, 68, 68, 0.3)', padding: '10px 14px' }}
+                      disabled={isBusy}
+                      onClick={() => setCancelTarget(order)}
+                      style={{ color: '#f87171', borderColor: 'rgba(239, 68, 68, 0.35)', padding: '10px 14px' }}
                       title="Cancel Order"
+                      aria-label={`Cancel order #${order.orderNumber}`}
                     >
                       <XCircle size={16} />
                     </button>
@@ -466,6 +468,23 @@ export const LiveOrdersPage = ({ onOrdersCountChange }) => {
           })}
         </div>
       )}
+
+      <ConfirmDialog
+        isOpen={Boolean(cancelTarget)}
+        title="Cancel Customer Order?"
+        message={
+          cancelTarget
+            ? `Are you sure you want to cancel Order #${cancelTarget.orderNumber} for Table #${cancelTarget.tableNumber}? The guest will be notified immediately.`
+            : ''
+        }
+        confirmLabel="Yes, Cancel Order"
+        onCancel={() => setCancelTarget(null)}
+        onConfirm={() => {
+          const target = cancelTarget;
+          setCancelTarget(null);
+          if (target) handleUpdateStatus(target._id, 'Cancelled');
+        }}
+      />
     </div>
   );
 };

@@ -12,7 +12,20 @@ export default defineConfig({
       },
       '/socket.io': {
         target: 'http://localhost:5000',
-        ws: true
+        changeOrigin: true,
+        ws: true,
+        configure: (proxy) => {
+          const ignoreAbort = (err) => {
+            if (err && ['ECONNABORTED', 'ECONNRESET', 'EPIPE'].includes(err.code)) {
+              return;
+            }
+            console.error('[vite] socket.io proxy error:', err?.message || err);
+          };
+          proxy.on('error', ignoreAbort);
+          proxy.on('proxyReqWs', (_proxyReq, _req, socket) => {
+            socket.on('error', ignoreAbort);
+          });
+        }
       }
     }
   }

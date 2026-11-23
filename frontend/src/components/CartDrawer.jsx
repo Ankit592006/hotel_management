@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
 import { X, Plus, Minus, Trash2, CreditCard, Banknote, ShieldCheck, ArrowRight, Loader2 } from 'lucide-react';
 import { useCart } from '../context/CartContext';
+import { useToast } from './ToastProvider';
+import { useModalBehavior } from '../hooks/useModalBehavior';
 import { api } from '../api/client';
 import confetti from 'canvas-confetti';
 
@@ -21,9 +23,12 @@ export const CartDrawer = ({ onOrderPlaced }) => {
     clearCart
   } = useCart();
 
+  const toast = useToast();
   const [paymentMethod, setPaymentMethod] = useState('Razorpay');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
+
+  useModalBehavior(isCartOpen, () => setIsCartOpen(false));
 
   if (!isCartOpen) return null;
 
@@ -33,7 +38,6 @@ export const CartDrawer = ({ onOrderPlaced }) => {
     setErrorMessage('');
 
     try {
-      // 1. Create order on backend (prices are securely calculated by backend)
       const orderPayload = {
         tableNumber: Number(tableNumber),
         items: items.map((i) => ({
@@ -52,12 +56,10 @@ export const CartDrawer = ({ onOrderPlaced }) => {
 
       const createdOrder = res.data;
 
-      // 2. Handle Razorpay Online Payment Flow
       if (paymentMethod === 'Razorpay') {
         const paymentRes = await api.createPaymentOrder(createdOrder._id);
         const { razorpayOrderId, amount, keyId, isSimulation } = paymentRes.data;
 
-        // Check if we can open real Razorpay modal or run simulated verification
         if (!isSimulation && window.Razorpay && keyId && !keyId.includes('demo')) {
           const options = {
             key: keyId,
@@ -68,7 +70,6 @@ export const CartDrawer = ({ onOrderPlaced }) => {
             order_id: razorpayOrderId,
             handler: async (response) => {
               try {
-                // Verify signature on backend
                 await api.verifyPayment({
                   orderId: createdOrder._id,
                   razorpay_order_id: response.razorpay_order_id,
@@ -77,11 +78,13 @@ export const CartDrawer = ({ onOrderPlaced }) => {
                 });
 
                 confetti({ particleCount: 80, spread: 60, origin: { y: 0.7 } });
+                toast.success('Payment verified! Your order is sent to the kitchen.');
                 clearCart();
                 setIsCartOpen(false);
                 onOrderPlaced(createdOrder._id);
               } catch (err) {
-                alert('Payment verification failed. Please contact restaurant staff.');
+                setErrorMessage('Payment verification failed. Please contact restaurant staff.');
+                toast.error('Payment verification failed. Please inform staff.');
               }
             },
             prefill: {
@@ -92,7 +95,6 @@ export const CartDrawer = ({ onOrderPlaced }) => {
             },
             modal: {
               ondismiss: () => {
-                // User closed modal without paying -> still keep order and go to tracking page
                 clearCart();
                 setIsCartOpen(false);
                 onOrderPlaced(createdOrder._id);
@@ -104,7 +106,6 @@ export const CartDrawer = ({ onOrderPlaced }) => {
           rzp.open();
           return;
         } else {
-          // Simulated test payment verification
           await api.verifyPayment({
             orderId: createdOrder._id,
             razorpay_order_id: razorpayOrderId,
@@ -115,20 +116,28 @@ export const CartDrawer = ({ onOrderPlaced }) => {
         }
       }
 
-      // Successful order
+      toast.success(`Order #${createdOrder.orderNumber} placed successfully!`);
       clearCart();
       setIsCartOpen(false);
       onOrderPlaced(createdOrder._id);
     } catch (err) {
       console.error('Order error:', err);
-      setErrorMessage(err.message || 'Something went wrong placing your order.');
+      const msg = err.message || 'Something went wrong placing your order.';
+      setErrorMessage(msg);
+      toast.error(msg);
     } finally {
       setIsSubmitting(false);
     }
   };
 
   return (
-    <div className="cart-modal-overlay" onClick={() => setIsCartOpen(false)}>
+    <div
+      className="cart-modal-overlay"
+      onClick={() => setIsCartOpen(false)}
+      role="dialog"
+      aria-modal="true"
+      aria-label="Your Order Cart"
+    >
       <div
         className="cart-modal-panel animate-slide-up"
         onClick={(e) => e.stopPropagation()}
@@ -136,11 +145,13 @@ export const CartDrawer = ({ onOrderPlaced }) => {
         {/* Drawer Header */}
         <div
           style={{
-            padding: '18px 20px',
+            padding: '16px 20px',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'space-between',
-            borderBottom: '1px solid var(--border-subtle)'
+            gap: '12px',
+            borderBottom: '1px solid var(--border-subtle)',
+            flexShrink: 0
           }}
         >
           <div>
@@ -149,21 +160,27 @@ export const CartDrawer = ({ onOrderPlaced }) => {
               Table #{tableNumber} • {items.length} unique dish{items.length !== 1 ? 'es' : ''}
             </p>
           </div>
-          <button className="btn-icon" onClick={() => setIsCartOpen(false)}>
+          <button
+            type="button"
+            className="btn-icon"
+            onClick={() => setIsCartOpen(false)}
+            aria-label="Close cart"
+          >
             <X size={18} />
           </button>
         </div>
 
         {/* Drawer Content */}
-        <div style={{ padding: '20px', overflowY: 'auto', flex: 1, display: 'flex', flexDirection: 'column', gap: '16px' }}>
+        <div style={{ padding: '18px 20px', overflowY: 'auto', flex: 1, display: 'flex', flexDirection: 'column', gap: '16px' }}>
           {errorMessage && (
             <div
+              role="alert"
               style={{
                 padding: '12px 14px',
                 borderRadius: 'var(--radius-md)',
                 backgroundColor: 'rgba(239, 68, 68, 0.15)',
-                border: '1px solid rgba(239, 68, 68, 0.3)',
-                color: '#f87171',
+                border: '1px solid rgba(239, 68, 68, 0.35)',
+                color: '#fca5a5',
                 fontSize: '13px'
               }}
             >
@@ -178,7 +195,7 @@ export const CartDrawer = ({ onOrderPlaced }) => {
           ) : (
             <>
               {/* Items List */}
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
                 {items.map((item) => (
                   <div
                     key={item._id}
@@ -189,35 +206,46 @@ export const CartDrawer = ({ onOrderPlaced }) => {
                       padding: '12px 14px'
                     }}
                   >
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '8px' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '10px', marginBottom: '8px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0 }}>
                         <span className={`diet-badge ${item.isVeg ? 'veg' : 'non-veg'}`} />
                         <h4 style={{ fontSize: '14px', fontWeight: 700 }}>{item.name}</h4>
                       </div>
-                      <div style={{ fontSize: '14px', fontWeight: 700, color: 'var(--accent-primary)' }}>
+                      <div style={{ fontSize: '14px', fontWeight: 700, color: 'var(--accent-primary)', whiteSpace: 'nowrap' }}>
                         ₹{item.price * item.quantity}
                       </div>
                     </div>
 
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px' }}>
                       <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
                         ₹{item.price} each
                       </div>
 
-                      {/* Stepper & Delete */}
                       <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                        <div className="qty-stepper" style={{ height: '30px' }}>
-                          <button onClick={() => updateQuantity(item._id, -1)}>
+                        <div className="qty-stepper" style={{ height: '32px' }}>
+                          <button
+                            type="button"
+                            onClick={() => updateQuantity(item._id, -1)}
+                            aria-label={`Decrease quantity of ${item.name}`}
+                            style={{ height: '32px', width: '30px' }}
+                          >
                             <Minus size={14} />
                           </button>
                           <span>{item.quantity}</span>
-                          <button onClick={() => updateQuantity(item._id, 1)}>
+                          <button
+                            type="button"
+                            onClick={() => updateQuantity(item._id, 1)}
+                            aria-label={`Increase quantity of ${item.name}`}
+                            style={{ height: '32px', width: '30px' }}
+                          >
                             <Plus size={14} />
                           </button>
                         </div>
                         <button
+                          type="button"
                           onClick={() => removeItem(item._id)}
-                          style={{ color: 'var(--text-muted)', padding: '4px' }}
+                          style={{ color: 'var(--text-muted)', padding: '6px' }}
+                          aria-label={`Remove ${item.name}`}
                           title="Remove item"
                         >
                           <Trash2 size={16} />
@@ -225,7 +253,6 @@ export const CartDrawer = ({ onOrderPlaced }) => {
                       </div>
                     </div>
 
-                    {/* Special instruction input */}
                     <input
                       type="text"
                       placeholder="Special instructions (e.g. less spicy, no onion)"
@@ -235,10 +262,10 @@ export const CartDrawer = ({ onOrderPlaced }) => {
                         marginTop: '10px',
                         width: '100%',
                         fontSize: '12px',
-                        background: 'rgba(0,0,0,0.25)',
-                        border: '1px solid rgba(255,255,255,0.06)',
-                        borderRadius: '6px',
-                        padding: '6px 10px',
+                        background: 'rgba(0,0,0,0.28)',
+                        border: '1px solid rgba(255,255,255,0.08)',
+                        borderRadius: '8px',
+                        padding: '8px 10px',
                         color: 'var(--text-primary)'
                       }}
                     />
@@ -266,18 +293,20 @@ export const CartDrawer = ({ onOrderPlaced }) => {
                 <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '8px' }}>
                   Choose Payment Method
                 </label>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
-                  <div
+                <div className="responsive-form-grid" style={{ gap: '10px' }}>
+                  <button
+                    type="button"
+                    aria-pressed={paymentMethod === 'Razorpay'}
                     onClick={() => setPaymentMethod('Razorpay')}
                     style={{
                       padding: '12px',
                       borderRadius: 'var(--radius-md)',
-                      background: paymentMethod === 'Razorpay' ? 'rgba(245, 158, 11, 0.15)' : 'rgba(255,255,255,0.03)',
+                      background: paymentMethod === 'Razorpay' ? 'rgba(245, 158, 11, 0.16)' : 'rgba(255,255,255,0.03)',
                       border: `1.5px solid ${paymentMethod === 'Razorpay' ? 'var(--accent-primary)' : 'var(--border-subtle)'}`,
-                      cursor: 'pointer',
                       display: 'flex',
                       flexDirection: 'column',
-                      gap: '4px'
+                      gap: '4px',
+                      textAlign: 'left'
                     }}
                   >
                     <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: paymentMethod === 'Razorpay' ? 'var(--accent-primary)' : 'var(--text-primary)' }}>
@@ -285,19 +314,21 @@ export const CartDrawer = ({ onOrderPlaced }) => {
                       <span style={{ fontWeight: 700, fontSize: '13px' }}>Razorpay</span>
                     </div>
                     <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>UPI / Cards / NetBanking</span>
-                  </div>
+                  </button>
 
-                  <div
+                  <button
+                    type="button"
+                    aria-pressed={paymentMethod === 'Counter'}
                     onClick={() => setPaymentMethod('Counter')}
                     style={{
                       padding: '12px',
                       borderRadius: 'var(--radius-md)',
-                      background: paymentMethod === 'Counter' ? 'rgba(245, 158, 11, 0.15)' : 'rgba(255,255,255,0.03)',
+                      background: paymentMethod === 'Counter' ? 'rgba(245, 158, 11, 0.16)' : 'rgba(255,255,255,0.03)',
                       border: `1.5px solid ${paymentMethod === 'Counter' ? 'var(--accent-primary)' : 'var(--border-subtle)'}`,
-                      cursor: 'pointer',
                       display: 'flex',
                       flexDirection: 'column',
-                      gap: '4px'
+                      gap: '4px',
+                      textAlign: 'left'
                     }}
                   >
                     <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: paymentMethod === 'Counter' ? 'var(--accent-primary)' : 'var(--text-primary)' }}>
@@ -305,7 +336,7 @@ export const CartDrawer = ({ onOrderPlaced }) => {
                       <span style={{ fontWeight: 700, fontSize: '13px' }}>Pay at Counter</span>
                     </div>
                     <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>Cash or card after dining</span>
-                  </div>
+                  </button>
                 </div>
               </div>
 
@@ -338,7 +369,7 @@ export const CartDrawer = ({ onOrderPlaced }) => {
                     fontSize: '16px',
                     color: 'var(--text-primary)',
                     paddingTop: '8px',
-                    borderTop: '1px dashed rgba(255,255,255,0.1)'
+                    borderTop: '1px dashed rgba(255,255,255,0.12)'
                   }}
                 >
                   <span>Grand Total</span>
@@ -351,8 +382,9 @@ export const CartDrawer = ({ onOrderPlaced }) => {
 
         {/* Drawer Action Footer */}
         {items.length > 0 && (
-          <div className="cart-modal-footer" style={{ borderTop: '1px solid var(--border-subtle)', background: 'rgba(15,23,42,0.95)' }}>
+          <div className="cart-modal-footer" style={{ borderTop: '1px solid var(--border-subtle)', background: 'rgba(15,23,42,0.96)', flexShrink: 0 }}>
             <button
+              type="button"
               className="btn-primary"
               style={{ width: '100%', height: '50px', fontSize: '15px' }}
               onClick={handleCheckout}

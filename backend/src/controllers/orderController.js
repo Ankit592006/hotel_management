@@ -2,10 +2,43 @@ const Order = require('../models/Order');
 const MenuItem = require('../models/MenuItem');
 const Table = require('../models/Table');
 
+const MAX_ITEMS_PER_ORDER = 50;
+const MAX_QTY_PER_ITEM = 50;
+
+// Strict order status state machine
+const ALLOWED_STATUS_TRANSITIONS = {
+  Pending: ['Accepted', 'Cancelled'],
+  Accepted: ['Preparing', 'Cancelled'],
+  Preparing: ['Ready', 'Cancelled'],
+  Ready: ['Served', 'Cancelled'],
+  Served: [],
+  Cancelled: []
+};
+
 // Helper to generate readable Order Number: e.g. ORD-6821
 const generateOrderNumber = () => {
   const randomSuffix = Math.floor(1000 + Math.random() * 9000);
   return `ORD-${randomSuffix}`;
+};
+
+// Helper: Free a table only when it has NO active orders AND NO unpaid served orders
+const releaseTableIfSettled = async (tableNumber, io) => {
+  const unresolvedOrdersCount = await Order.countDocuments({
+    tableNumber,
+    $or: [
+      { orderStatus: { $in: ['Pending', 'Accepted', 'Preparing', 'Ready'] } },
+      { orderStatus: 'Served', paymentStatus: { $ne: 'Paid' } }
+    ]
+  });
+
+  if (unresolvedOrdersCount === 0) {
+    const table = await Table.findOne({ tableNumber });
+    if (table && table.status === 'occupied') {
+      table.status = 'available';
+      await table.save();
+      if (io) io.emit('table_status_updated', table);
+    }
+  }
 };
 
 // @desc    Create new customer order (with server-side price snapshot)
@@ -15,19 +48,34 @@ const createOrder = async (req, res, next) => {
   try {
     const { tableNumber, items, customerNotes, paymentMethod } = req.body;
 
-    if (!tableNumber || !items || !Array.isArray(items) || items.length === 0) {
+    const parsedTableNumber = Number(tableNumber);
+    if (!Number.isInteger(parsedTableNumber) || parsedTableNumber < 1) {
       return res.status(400).json({
         success: false,
-        message: 'Table number and non-empty items array are required'
+        message: 'A valid positive table number is required'
       });
     }
 
-    // 1. Verify table exists
-    const table = await Table.findOne({ tableNumber: Number(tableNumber) });
+    if (!items || !Array.isArray(items) || items.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'A non-empty items array is required'
+      });
+    }
+
+    if (items.length > MAX_ITEMS_PER_ORDER) {
+      return res.status(400).json({
+        success: false,
+        message: `Maximum ${MAX_ITEMS_PER_ORDER} items allowed per order`
+      });
+    }
+
+    // 1. Verify table exists and is active
+    const table = await Table.findOne({ tableNumber: parsedTableNumber, isActive: true });
     if (!table) {
       return res.status(404).json({
         success: false,
-        message: `Table #${tableNumber} not found`
+        message: `Table #${parsedTableNumber} not found`
       });
     }
 
@@ -62,7 +110,15 @@ const createOrder = async (req, res, next) => {
         });
       }
 
-      const quantity = Math.max(1, parseInt(cartItem.quantity, 10) || 1);
+      const rawQty = parseInt(cartItem.quantity, 10);
+      if (isNaN(rawQty) || rawQty < 1 || rawQty > MAX_QTY_PER_ITEM) {
+        return res.status(400).json({
+          success: false,
+          message: `Quantity for "${dbItem.name}" must be between 1 and ${MAX_QTY_PER_ITEM}`
+        });
+      }
+
+      const quantity = rawQty;
       const linePrice = dbItem.price;
       const lineTotal = linePrice * quantity;
       subtotal += lineTotal;
@@ -77,7 +133,7 @@ const createOrder = async (req, res, next) => {
         price: linePrice,
         quantity,
         isVeg: dbItem.isVeg,
-        specialInstructions: cartItem.specialInstructions ? cartItem.specialInstructions.trim() : ''
+        specialInstructions: cartItem.specialInstructions ? String(cartItem.specialInstructions).trim().slice(0, 200) : ''
       });
     }
 
@@ -95,7 +151,7 @@ const createOrder = async (req, res, next) => {
 
     const order = await Order.create({
       orderNumber,
-      tableNumber: Number(tableNumber),
+      tableNumber: parsedTableNumber,
       items: sanitizedItems,
       subtotal,
       taxAmount,
@@ -103,8 +159,8 @@ const createOrder = async (req, res, next) => {
       orderStatus: 'Pending',
       paymentStatus: 'Pending',
       paymentMethod: paymentMethod === 'Razorpay' ? 'Razorpay' : 'Counter',
-      customerNotes: customerNotes ? customerNotes.trim() : '',
-      estimatedPrepTime: maxPrepTime + 5 // buffer
+      customerNotes: customerNotes ? String(customerNotes).trim().slice(0, 300) : '',
+      estimatedPrepTime: maxPrepTime + 5
     });
 
     // Mark table as occupied
@@ -133,11 +189,11 @@ const createOrder = async (req, res, next) => {
 
 // @desc    Get all orders with filtering and pagination
 // @route   GET /api/orders
-// @access  Private (Admin)
+// @access  Private (Admin / Staff)
 const getOrders = async (req, res, next) => {
   try {
     const { status, paymentStatus, tableNumber, date, limit = 100 } = req.query;
-    let query = {};
+    const query = {};
 
     if (status && status !== 'All') {
       query.orderStatus = status;
@@ -148,7 +204,10 @@ const getOrders = async (req, res, next) => {
     }
 
     if (tableNumber) {
-      query.tableNumber = Number(tableNumber);
+      const parsedTable = Number(tableNumber);
+      if (!isNaN(parsedTable)) {
+        query.tableNumber = parsedTable;
+      }
     }
 
     if (date) {
@@ -159,9 +218,10 @@ const getOrders = async (req, res, next) => {
       query.createdAt = { $gte: startOfDay, $lte: endOfDay };
     }
 
+    const safeLimit = Math.min(Math.max(1, Number(limit) || 100), 500);
     const orders = await Order.find(query)
       .sort({ createdAt: -1 })
-      .limit(Number(limit));
+      .limit(safeLimit);
 
     res.json({
       success: true,
@@ -195,13 +255,13 @@ const getOrderById = async (req, res, next) => {
   }
 };
 
-// @desc    Update order status
+// @desc    Update order status (enforces state machine)
 // @route   PATCH /api/orders/:id/status
-// @access  Private (Admin)
+// @access  Private (Admin / Staff)
 const updateOrderStatus = async (req, res, next) => {
   try {
     const { status } = req.body;
-    const validStatuses = ['Pending', 'Accepted', 'Preparing', 'Ready', 'Served', 'Cancelled'];
+    const validStatuses = Object.keys(ALLOWED_STATUS_TRANSITIONS);
 
     if (!validStatuses.includes(status)) {
       return res.status(400).json({
@@ -218,29 +278,28 @@ const updateOrderStatus = async (req, res, next) => {
       });
     }
 
+    if (order.orderStatus === status) {
+      return res.json({ success: true, data: order });
+    }
+
+    const allowedNext = ALLOWED_STATUS_TRANSITIONS[order.orderStatus] || [];
+    if (!allowedNext.includes(status)) {
+      return res.status(400).json({
+        success: false,
+        message: `Cannot transition order from "${order.orderStatus}" to "${status}".`
+      });
+    }
+
     order.orderStatus = status;
     await order.save();
 
-    // If order is Served or Cancelled, check if all active orders on table are finished
-    if (status === 'Served' || status === 'Cancelled') {
-      const pendingOrders = await Order.find({
-        tableNumber: order.tableNumber,
-        orderStatus: { $in: ['Pending', 'Accepted', 'Preparing', 'Ready'] }
-      });
+    const io = req.app.get('io');
 
-      if (pendingOrders.length === 0) {
-        const table = await Table.findOne({ tableNumber: order.tableNumber });
-        if (table && table.status === 'occupied') {
-          table.status = 'available';
-          await table.save();
-          const io = req.app.get('io');
-          if (io) io.emit('table_status_updated', table);
-        }
-      }
+    // Release table only if all active AND unpaid served orders on this table are settled
+    if (status === 'Served' || status === 'Cancelled') {
+      await releaseTableIfSettled(order.tableNumber, io);
     }
 
-    // Broadcast status change to customer tracking room and admin room
-    const io = req.app.get('io');
     if (io) {
       io.to(`order-${order._id.toString()}`).emit('order_status_updated', {
         orderId: order._id,
@@ -261,7 +320,7 @@ const updateOrderStatus = async (req, res, next) => {
 
 // @desc    Update payment status manually (e.g. Counter payment marked paid)
 // @route   PATCH /api/orders/:id/payment-status
-// @access  Private (Admin)
+// @access  Private (Admin / Staff)
 const updatePaymentStatus = async (req, res, next) => {
   try {
     const { paymentStatus } = req.body;
@@ -280,15 +339,33 @@ const updatePaymentStatus = async (req, res, next) => {
       });
     }
 
+    if (order.orderStatus === 'Cancelled' && paymentStatus === 'Paid') {
+      return res.status(400).json({
+        success: false,
+        message: 'Cannot mark a cancelled order as Paid'
+      });
+    }
+
     order.paymentStatus = paymentStatus;
     await order.save();
 
     const io = req.app.get('io');
+
+    // If counter order was already served and is now paid, release table if all orders settled
+    if (paymentStatus === 'Paid') {
+      await releaseTableIfSettled(order.tableNumber, io);
+    }
+
     if (io) {
-      io.to(`order-${order._id.toString()}`).emit('payment_status_updated', {
+      const payload = {
         orderId: order._id,
-        paymentStatus: order.paymentStatus
-      });
+        paymentStatus: order.paymentStatus,
+        razorpayPaymentId: order.razorpayPaymentId
+      };
+      io.to(`order-${order._id.toString()}`).emit('payment_status_updated', payload);
+      if (paymentStatus === 'Paid') {
+        io.to(`order-${order._id.toString()}`).emit('payment_success', payload);
+      }
       io.to('admin-room').emit('order_status_updated', order);
     }
 
@@ -306,5 +383,6 @@ module.exports = {
   getOrders,
   getOrderById,
   updateOrderStatus,
-  updatePaymentStatus
+  updatePaymentStatus,
+  releaseTableIfSettled
 };

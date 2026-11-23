@@ -1,5 +1,8 @@
 const QRCode = require('qrcode');
 const Table = require('../models/Table');
+const Order = require('../models/Order');
+
+const VALID_TABLE_STATUSES = ['available', 'occupied', 'reserved'];
 
 const getFrontendBaseUrl = () => {
   return process.env.FRONTEND_URL || 'http://localhost:5173';
@@ -21,40 +24,24 @@ const getTables = async (req, res, next) => {
   }
 };
 
-// @desc    Get single table by table number
+// @desc    Get single table by table number (does NOT auto-create fake tables)
 // @route   GET /api/tables/:tableNumber
 // @access  Public (used on customer landing)
 const getTableByNumber = async (req, res, next) => {
   try {
     const tableNumber = Number(req.params.tableNumber);
-    if (isNaN(tableNumber)) {
+    if (!Number.isInteger(tableNumber) || tableNumber < 1) {
       return res.status(400).json({
         success: false,
         message: 'Invalid table number'
       });
     }
 
-    let table = await Table.findOne({ tableNumber, isActive: true });
-    
-    // Auto-create table if not found (convenience for demo/initial deployment)
+    const table = await Table.findOne({ tableNumber, isActive: true });
     if (!table) {
-      const baseUrl = getFrontendBaseUrl();
-      const tableUrl = `${baseUrl}/table/${tableNumber}`;
-      const qrCodeDataUrl = await QRCode.toDataURL(tableUrl, {
-        width: 320,
-        margin: 2,
-        color: {
-          dark: '#0f172a',
-          light: '#ffffff'
-        }
-      });
-
-      table = await Table.create({
-        tableNumber,
-        capacity: 4,
-        status: 'available',
-        tableUrl,
-        qrCodeDataUrl
+      return res.status(404).json({
+        success: false,
+        message: `Table #${tableNumber} not found`
       });
     }
 
@@ -73,24 +60,33 @@ const getTableByNumber = async (req, res, next) => {
 const createTable = async (req, res, next) => {
   try {
     const { tableNumber, capacity, status } = req.body;
+    const parsedNum = Number(tableNumber);
 
-    if (!tableNumber) {
+    if (!Number.isInteger(parsedNum) || parsedNum < 1) {
       return res.status(400).json({
         success: false,
-        message: 'Table number is required'
+        message: 'Table number must be a positive integer'
       });
     }
 
-    const existing = await Table.findOne({ tableNumber: Number(tableNumber) });
+    const parsedCap = capacity !== undefined ? Number(capacity) : 4;
+    if (!Number.isInteger(parsedCap) || parsedCap < 1) {
+      return res.status(400).json({
+        success: false,
+        message: 'Capacity must be at least 1'
+      });
+    }
+
+    const existing = await Table.findOne({ tableNumber: parsedNum });
     if (existing) {
       return res.status(400).json({
         success: false,
-        message: `Table #${tableNumber} already exists`
+        message: `Table #${parsedNum} already exists`
       });
     }
 
     const baseUrl = getFrontendBaseUrl();
-    const tableUrl = `${baseUrl}/table/${tableNumber}`;
+    const tableUrl = `${baseUrl}/table/${parsedNum}`;
     const qrCodeDataUrl = await QRCode.toDataURL(tableUrl, {
       width: 360,
       margin: 2,
@@ -101,9 +97,9 @@ const createTable = async (req, res, next) => {
     });
 
     const table = await Table.create({
-      tableNumber: Number(tableNumber),
-      capacity: capacity ? Number(capacity) : 4,
-      status: status || 'available',
+      tableNumber: parsedNum,
+      capacity: parsedCap,
+      status: VALID_TABLE_STATUSES.includes(status) ? status : 'available',
       tableUrl,
       qrCodeDataUrl
     });
@@ -119,11 +115,18 @@ const createTable = async (req, res, next) => {
 
 // @desc    Update table status (available, occupied, reserved)
 // @route   PATCH /api/tables/:tableNumber/status
-// @access  Private (Admin)
+// @access  Private (Admin / Staff)
 const updateTableStatus = async (req, res, next) => {
   try {
     const { status } = req.body;
     const tableNumber = Number(req.params.tableNumber);
+
+    if (!VALID_TABLE_STATUSES.includes(status)) {
+      return res.status(400).json({
+        success: false,
+        message: `Invalid table status. Allowed: ${VALID_TABLE_STATUSES.join(', ')}`
+      });
+    }
 
     const table = await Table.findOne({ tableNumber });
     if (!table) {
@@ -190,14 +193,29 @@ const regenerateTableQR = async (req, res, next) => {
   }
 };
 
-// @desc    Delete table
+// @desc    Delete table (blocked if active or unpaid orders exist)
 // @route   DELETE /api/tables/:tableNumber
 // @access  Private (Admin)
 const deleteTable = async (req, res, next) => {
   try {
     const tableNumber = Number(req.params.tableNumber);
-    const table = await Table.findOneAndDelete({ tableNumber });
 
+    const unresolvedOrders = await Order.countDocuments({
+      tableNumber,
+      $or: [
+        { orderStatus: { $in: ['Pending', 'Accepted', 'Preparing', 'Ready'] } },
+        { orderStatus: 'Served', paymentStatus: { $ne: 'Paid' } }
+      ]
+    });
+
+    if (unresolvedOrders > 0) {
+      return res.status(400).json({
+        success: false,
+        message: `Cannot delete Table #${tableNumber} while it has ${unresolvedOrders} active or unpaid order(s).`
+      });
+    }
+
+    const table = await Table.findOneAndDelete({ tableNumber });
     if (!table) {
       return res.status(404).json({
         success: false,

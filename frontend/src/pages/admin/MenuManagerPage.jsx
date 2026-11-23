@@ -7,22 +7,58 @@ import {
   CheckCircle,
   XCircle,
   UtensilsCrossed,
-  Sparkles,
-  X,
-  AlertCircle
+  X
 } from 'lucide-react';
 import { api } from '../../api/client';
+import { useAuth } from '../../context/AuthContext';
+import { useToast } from '../../components/ToastProvider';
+import { ConfirmDialog } from '../../components/ConfirmDialog';
+import { useModalBehavior } from '../../hooks/useModalBehavior';
+
+const MenuThumb = ({ src, alt }) => {
+  const [broken, setBroken] = useState(false);
+  if (!src || broken) {
+    return (
+      <div
+        style={{
+          width: '46px',
+          height: '46px',
+          borderRadius: '10px',
+          background: 'rgba(255,255,255,0.06)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          color: 'var(--text-muted)',
+          flexShrink: 0
+        }}
+      >
+        <UtensilsCrossed size={18} />
+      </div>
+    );
+  }
+  return (
+    <img
+      src={src}
+      alt={alt}
+      onError={() => setBroken(true)}
+      style={{ width: '46px', height: '46px', borderRadius: '10px', objectFit: 'cover', flexShrink: 0 }}
+    />
+  );
+};
 
 export const MenuManagerPage = () => {
+  const { user } = useAuth();
+  const isAdmin = user?.role === 'admin';
+  const toast = useToast();
   const [items, setItems] = useState([]);
   const [categories, setCategories] = useState([]);
   const [activeCategory, setActiveCategory] = useState('All');
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
 
-  // Modal State
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingItem, setEditingItem] = useState(null);
+  const [deleteTarget, setDeleteTarget] = useState(null);
   const [formData, setFormData] = useState({
     name: '',
     description: '',
@@ -37,6 +73,8 @@ export const MenuManagerPage = () => {
   const [modalError, setModalError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  useModalBehavior(isModalOpen, () => setIsModalOpen(false));
+
   const fetchMenuData = async () => {
     try {
       setLoading(true);
@@ -47,7 +85,7 @@ export const MenuManagerPage = () => {
       if (itemsRes.success) setItems(itemsRes.data);
       if (catRes.success) setCategories(catRes.data);
     } catch (err) {
-      console.error('Failed to load menu items:', err);
+      toast.error('Failed to load menu items.');
     } finally {
       setLoading(false);
     }
@@ -98,23 +136,22 @@ export const MenuManagerPage = () => {
         setItems((prev) =>
           prev.map((i) => (i._id === item._id ? { ...i, isAvailable: !i.isAvailable } : i))
         );
+        toast.info(`${item.name} marked as ${item.isAvailable ? 'Sold Out' : 'In Stock'}`);
       }
     } catch (err) {
-      alert(`Failed to toggle availability: ${err.message}`);
+      toast.error(`Failed to toggle availability: ${err.message}`);
     }
   };
 
-  const handleDelete = async (itemId, name) => {
-    if (!confirm(`Are you sure you want to permanently delete "${name}" from the menu?`)) {
-      return;
-    }
+  const handleDelete = async (item) => {
     try {
-      const res = await api.deleteMenuItem(itemId);
+      const res = await api.deleteMenuItem(item._id);
       if (res.success) {
-        setItems((prev) => prev.filter((i) => i._id !== itemId));
+        setItems((prev) => prev.filter((i) => i._id !== item._id));
+        toast.success(`Deleted "${item.name}" from menu`);
       }
     } catch (err) {
-      alert(`Failed to delete dish: ${err.message}`);
+      toast.error(`Failed to delete dish: ${err.message}`);
     }
   };
 
@@ -124,7 +161,7 @@ export const MenuManagerPage = () => {
     setIsSubmitting(true);
 
     try {
-      if (!formData.name || !formData.price || !formData.category) {
+      if (!formData.name || formData.price === '' || !formData.category) {
         throw new Error('Name, category, and price are required.');
       }
 
@@ -134,6 +171,7 @@ export const MenuManagerPage = () => {
           setItems((prev) =>
             prev.map((i) => (i._id === editingItem._id ? res.data : i))
           );
+          toast.success(`Updated "${res.data.name}"`);
         }
       } else {
         const res = await api.createMenuItem(formData);
@@ -142,6 +180,7 @@ export const MenuManagerPage = () => {
           if (!categories.includes(res.data.category)) {
             setCategories((prev) => [...prev, res.data.category]);
           }
+          toast.success(`Added "${res.data.name}" to menu`);
         }
       }
 
@@ -169,49 +208,58 @@ export const MenuManagerPage = () => {
   return (
     <div>
       {/* Title & Action Row */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px', flexWrap: 'wrap', gap: '14px' }}>
+      <div className="page-header">
         <div>
-          <h1 style={{ fontSize: '26px', fontWeight: 800 }}>Digital Menu Manager</h1>
-          <p style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>
-            Add, update dishes, prices, descriptions, and toggle kitchen availability
-          </p>
+          <h1 className="page-title">Digital Menu Manager</h1>
+          <p className="page-subtitle">Add, update dishes, prices, and toggle kitchen availability</p>
         </div>
 
-        <button className="btn-primary" onClick={handleOpenAdd}>
-          <Plus size={18} />
-          <span>Add New Dish</span>
-        </button>
+        {isAdmin && (
+          <button type="button" className="btn-primary" onClick={handleOpenAdd}>
+            <Plus size={18} />
+            <span>Add New Dish</span>
+          </button>
+        )}
       </div>
 
       {/* Filter Bar */}
-      <div style={{ display: 'flex', gap: '12px', marginBottom: '20px', flexWrap: 'wrap', alignItems: 'center' }}>
-        <div style={{ position: 'relative', flex: 1, minWidth: '240px' }}>
-          <Search size={16} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginBottom: '20px' }}>
+        <div style={{ position: 'relative', maxWidth: '420px', width: '100%' }}>
+          <Search size={16} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)', pointerEvents: 'none' }} />
           <input
             type="text"
             className="input-field"
             placeholder="Search menu dishes..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            style={{ paddingLeft: '36px' }}
+            style={{ paddingLeft: '36px', paddingRight: search ? '36px' : '14px' }}
           />
+          {search && (
+            <button
+              type="button"
+              onClick={() => setSearch('')}
+              aria-label="Clear search"
+              style={{
+                position: 'absolute',
+                right: '10px',
+                top: '50%',
+                transform: 'translateY(-50%)',
+                color: 'var(--text-muted)',
+                padding: '4px'
+              }}
+            >
+              <X size={15} />
+            </button>
+          )}
         </div>
 
-        {/* Category Pills */}
-        <div style={{ display: 'flex', gap: '8px', overflowX: 'auto', paddingBottom: '2px' }}>
+        <div className="hide-scrollbar" style={{ display: 'flex', gap: '8px', overflowX: 'auto', paddingBottom: '2px' }}>
           {['All', ...categories].map((c) => (
             <button
               key={c}
+              type="button"
               onClick={() => setActiveCategory(c)}
-              style={{
-                padding: '8px 16px',
-                borderRadius: 'var(--radius-full)',
-                background: activeCategory === c ? 'var(--accent-gradient)' : 'rgba(255, 255, 255, 0.05)',
-                color: activeCategory === c ? '#0f172a' : 'var(--text-secondary)',
-                fontWeight: 700,
-                fontSize: '13px',
-                border: `1px solid ${activeCategory === c ? 'transparent' : 'var(--border-subtle)'}`
-              }}
+              className={`category-pill ${activeCategory === c ? 'active' : ''}`}
             >
               {c}
             </button>
@@ -219,9 +267,9 @@ export const MenuManagerPage = () => {
         </div>
       </div>
 
-      {/* Dishes Table */}
-      <div className="glass-panel" style={{ overflowX: 'auto', WebkitOverflowScrolling: 'touch' }}>
-        <table style={{ width: '100%', minWidth: '600px', borderCollapse: 'collapse', textAlign: 'left', fontSize: '14px' }}>
+      {/* Desktop Table View */}
+      <div className="glass-panel desktop-table-view" style={{ overflowX: 'auto' }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '14px' }}>
           <thead>
             <tr style={{ borderBottom: '1px solid var(--border-subtle)', background: 'rgba(0, 0, 0, 0.25)', color: 'var(--text-secondary)', fontSize: '12px', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
               <th style={{ padding: '14px 18px' }}>Dish</th>
@@ -247,21 +295,11 @@ export const MenuManagerPage = () => {
               </tr>
             ) : (
               filteredItems.map((item) => (
-                <tr
-                  key={item._id}
-                  style={{
-                    borderBottom: '1px solid rgba(255, 255, 255, 0.04)',
-                    transition: 'background 0.15s ease'
-                  }}
-                >
+                <tr key={item._id} className="admin-table-row">
                   <td style={{ padding: '14px 18px' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                      <img
-                        src={item.imageUrl}
-                        alt={item.name}
-                        style={{ width: '44px', height: '44px', borderRadius: '8px', objectFit: 'cover' }}
-                      />
-                      <div>
+                      <MenuThumb src={item.imageUrl} alt={item.name} />
+                      <div style={{ minWidth: 0 }}>
                         <div style={{ fontWeight: 700, color: 'var(--text-primary)' }}>{item.name}</div>
                         <div style={{ fontSize: '12px', color: 'var(--text-muted)', maxWidth: '280px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                           {item.description}
@@ -276,6 +314,7 @@ export const MenuManagerPage = () => {
                   </td>
                   <td style={{ padding: '14px 18px' }}>
                     <button
+                      type="button"
                       onClick={() => handleToggleStock(item)}
                       style={{
                         display: 'inline-flex',
@@ -285,35 +324,42 @@ export const MenuManagerPage = () => {
                         borderRadius: 'var(--radius-full)',
                         fontSize: '12px',
                         fontWeight: 700,
-                        background: item.isAvailable ? 'var(--veg-bg)' : 'rgba(239, 68, 68, 0.15)',
+                        background: item.isAvailable ? 'var(--veg-bg)' : 'rgba(239, 68, 68, 0.16)',
                         color: item.isAvailable ? 'var(--veg-color)' : '#f87171',
-                        border: `1px solid ${item.isAvailable ? 'rgba(34, 197, 94, 0.3)' : 'rgba(239, 68, 68, 0.3)'}`
+                        border: `1px solid ${item.isAvailable ? 'rgba(34, 197, 94, 0.32)' : 'rgba(239, 68, 68, 0.32)'}`
                       }}
-                      title="Click to toggle availability"
                     >
                       {item.isAvailable ? <CheckCircle size={14} /> : <XCircle size={14} />}
                       <span>{item.isAvailable ? 'In Stock' : 'Sold Out'}</span>
                     </button>
                   </td>
                   <td style={{ padding: '14px 18px', textAlign: 'right' }}>
-                    <div style={{ display: 'inline-flex', gap: '8px' }}>
-                      <button
-                        className="btn-icon"
-                        onClick={() => handleOpenEdit(item)}
-                        title="Edit dish"
-                        style={{ width: '34px', height: '34px' }}
-                      >
-                        <Edit2 size={15} />
-                      </button>
-                      <button
-                        className="btn-icon"
-                        onClick={() => handleDelete(item._id, item.name)}
-                        title="Delete dish"
-                        style={{ width: '34px', height: '34px', color: '#ef4444' }}
-                      >
-                        <Trash2 size={15} />
-                      </button>
-                    </div>
+                    {isAdmin ? (
+                      <div style={{ display: 'inline-flex', gap: '8px' }}>
+                        <button
+                          type="button"
+                          className="btn-icon"
+                          onClick={() => handleOpenEdit(item)}
+                          title="Edit dish"
+                          aria-label={`Edit ${item.name}`}
+                          style={{ width: '36px', height: '36px' }}
+                        >
+                          <Edit2 size={15} />
+                        </button>
+                        <button
+                          type="button"
+                          className="btn-icon"
+                          onClick={() => setDeleteTarget(item)}
+                          title="Delete dish"
+                          aria-label={`Delete ${item.name}`}
+                          style={{ width: '36px', height: '36px', color: '#f87171' }}
+                        >
+                          <Trash2 size={15} />
+                        </button>
+                      </div>
+                    ) : (
+                      <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>View / Stock Only</span>
+                    )}
                   </td>
                 </tr>
               ))
@@ -322,162 +368,206 @@ export const MenuManagerPage = () => {
         </table>
       </div>
 
+      {/* Mobile Stacked Card View (< 768px — zero sideways scrolling) */}
+      <div className="mobile-card-list">
+        {loading ? (
+          <div className="glass-panel" style={{ padding: '40px', textAlign: 'center', color: 'var(--text-secondary)' }}>
+            Loading menu database...
+          </div>
+        ) : filteredItems.length === 0 ? (
+          <div className="glass-panel" style={{ padding: '40px', textAlign: 'center', color: 'var(--text-secondary)' }}>
+            No dishes found matching your query.
+          </div>
+        ) : (
+          filteredItems.map((item) => (
+            <div key={item._id} className="glass-panel" style={{ padding: '14px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              <div style={{ display: 'flex', gap: '12px', alignItems: 'flex-start' }}>
+                <MenuThumb src={item.imageUrl} alt={item.name} />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '8px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', minWidth: 0 }}>
+                      <span className={`diet-badge ${item.isVeg ? 'veg' : 'non-veg'}`} />
+                      <span style={{ fontWeight: 700, fontSize: '14px' }}>{item.name}</span>
+                    </div>
+                    <span style={{ fontWeight: 800, color: 'var(--accent-primary)', whiteSpace: 'nowrap' }}>₹{item.price}</span>
+                  </div>
+                  <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '2px' }}>
+                    {item.category}
+                  </div>
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px', paddingTop: '10px', borderTop: '1px solid var(--border-subtle)' }}>
+                <button
+                  type="button"
+                  onClick={() => handleToggleStock(item)}
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    padding: '6px 12px',
+                    borderRadius: 'var(--radius-full)',
+                    fontSize: '12px',
+                    fontWeight: 700,
+                    background: item.isAvailable ? 'var(--veg-bg)' : 'rgba(239, 68, 68, 0.16)',
+                    color: item.isAvailable ? 'var(--veg-color)' : '#f87171',
+                    border: `1px solid ${item.isAvailable ? 'rgba(34, 197, 94, 0.32)' : 'rgba(239, 68, 68, 0.32)'}`
+                  }}
+                >
+                  {item.isAvailable ? <CheckCircle size={14} /> : <XCircle size={14} />}
+                  <span>{item.isAvailable ? 'In Stock' : 'Sold Out'}</span>
+                </button>
+
+                {isAdmin && (
+                  <div style={{ display: 'flex', gap: '8px' }}>
+                    <button type="button" className="btn-icon" onClick={() => handleOpenEdit(item)} aria-label={`Edit ${item.name}`} style={{ width: '36px', height: '36px' }}>
+                      <Edit2 size={15} />
+                    </button>
+                    <button type="button" className="btn-icon" onClick={() => setDeleteTarget(item)} aria-label={`Delete ${item.name}`} style={{ width: '36px', height: '36px', color: '#f87171' }}>
+                      <Trash2 size={15} />
+                    </button>
+                  </div>
+                )}
+              </div>
+            </div>
+          ))
+        )}
+      </div>
+
       {/* Add / Edit Dish Modal */}
       {isModalOpen && (
-        <div
-          style={{
-            position: 'fixed',
-            inset: 0,
-            zIndex: 100,
-            backgroundColor: 'rgba(0,0,0,0.75)',
-            backdropFilter: 'blur(8px)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            padding: '20px'
-          }}
-          onClick={() => setIsModalOpen(false)}
-        >
-          <div
-            className="glass-panel animate-fade-in"
-            style={{
-              width: '100%',
-              maxWidth: '540px',
-              backgroundColor: '#0f172a',
-              padding: '28px',
-              maxHeight: '90vh',
-              overflowY: 'auto'
-            }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-              <h2 style={{ fontSize: '20px', fontWeight: 800 }}>
+        <div className="modal-overlay" onClick={() => setIsModalOpen(false)} role="dialog" aria-modal="true" aria-label="Dish form">
+          <div className="modal-panel animate-fade-in" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2 style={{ fontSize: '19px', fontWeight: 800 }}>
                 {editingItem ? 'Edit Dish Details' : 'Add New Gourmet Dish'}
               </h2>
-              <button className="btn-icon" onClick={() => setIsModalOpen(false)}>
+              <button type="button" className="btn-icon" onClick={() => setIsModalOpen(false)} aria-label="Close modal">
                 <X size={18} />
               </button>
             </div>
 
-            {modalError && (
-              <div
-                style={{
-                  padding: '10px 14px',
-                  borderRadius: 'var(--radius-md)',
-                  backgroundColor: 'rgba(239, 68, 68, 0.15)',
-                  border: '1px solid rgba(239, 68, 68, 0.3)',
-                  color: '#f87171',
-                  fontSize: '13px',
-                  marginBottom: '16px'
-                }}
-              >
-                {modalError}
-              </div>
-            )}
+            <form onSubmit={handleSubmitModal} style={{ display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden' }}>
+              <div className="modal-body" style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                {modalError && (
+                  <div
+                    role="alert"
+                    style={{
+                      padding: '10px 14px',
+                      borderRadius: 'var(--radius-md)',
+                      backgroundColor: 'rgba(239, 68, 68, 0.15)',
+                      border: '1px solid rgba(239, 68, 68, 0.35)',
+                      color: '#fca5a5',
+                      fontSize: '13px'
+                    }}
+                  >
+                    {modalError}
+                  </div>
+                )}
 
-            <form onSubmit={handleSubmitModal} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-              <div>
-                <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '6px' }}>
-                  Dish Name *
-                </label>
-                <input
-                  type="text"
-                  required
-                  className="input-field"
-                  placeholder="e.g. Paneer Tikka Angara"
-                  value={formData.name}
-                  onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                />
-              </div>
-
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
                 <div>
                   <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '6px' }}>
-                    Category *
+                    Dish Name *
                   </label>
                   <input
                     type="text"
                     required
                     className="input-field"
-                    placeholder="e.g. Starters, Mains, Desserts"
-                    value={formData.category}
-                    onChange={(e) => setFormData({ ...formData, category: e.target.value })}
+                    placeholder="e.g. Paneer Tikka Angara"
+                    value={formData.name}
+                    onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                  />
+                </div>
+
+                <div className="responsive-form-grid">
+                  <div>
+                    <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '6px' }}>
+                      Category *
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      className="input-field"
+                      placeholder="e.g. Starters, Mains"
+                      value={formData.category}
+                      onChange={(e) => setFormData({ ...formData, category: e.target.value })}
+                    />
+                  </div>
+
+                  <div>
+                    <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '6px' }}>
+                      Price (₹) *
+                    </label>
+                    <input
+                      type="number"
+                      required
+                      min="0"
+                      className="input-field"
+                      placeholder="e.g. 320"
+                      value={formData.price}
+                      onChange={(e) => setFormData({ ...formData, price: e.target.value })}
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '6px' }}>
+                    Description
+                  </label>
+                  <textarea
+                    className="input-field"
+                    rows="3"
+                    placeholder="Describe ingredients, marinades, flavor notes..."
+                    value={formData.description}
+                    onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+                    style={{ resize: 'vertical' }}
                   />
                 </div>
 
                 <div>
                   <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '6px' }}>
-                    Price (₹) *
+                    Image URL
                   </label>
                   <input
-                    type="number"
-                    required
-                    min="0"
+                    type="url"
                     className="input-field"
-                    placeholder="e.g. 320"
-                    value={formData.price}
-                    onChange={(e) => setFormData({ ...formData, price: e.target.value })}
+                    placeholder="https://images.unsplash.com/..."
+                    value={formData.imageUrl}
+                    onChange={(e) => setFormData({ ...formData, imageUrl: e.target.value })}
                   />
                 </div>
-              </div>
 
-              <div>
-                <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '6px' }}>
-                  Description
-                </label>
-                <textarea
-                  className="input-field"
-                  rows="3"
-                  placeholder="Describe ingredients, marinades, flavor notes..."
-                  value={formData.description}
-                  onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-                  style={{ resize: 'vertical' }}
-                />
-              </div>
+                <div className="responsive-form-grid">
+                  <div>
+                    <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '6px' }}>
+                      Dietary Classification
+                    </label>
+                    <select
+                      className="input-field"
+                      value={formData.isVeg ? 'veg' : 'non-veg'}
+                      onChange={(e) => setFormData({ ...formData, isVeg: e.target.value === 'veg' })}
+                    >
+                      <option value="veg">Vegetarian (Veg)</option>
+                      <option value="non-veg">Non-Vegetarian</option>
+                    </select>
+                  </div>
 
-              <div>
-                <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '6px' }}>
-                  Image URL
-                </label>
-                <input
-                  type="url"
-                  className="input-field"
-                  placeholder="https://images.unsplash.com/..."
-                  value={formData.imageUrl}
-                  onChange={(e) => setFormData({ ...formData, imageUrl: e.target.value })}
-                />
-              </div>
-
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
-                <div>
-                  <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '6px' }}>
-                    Dietary Classification
-                  </label>
-                  <select
-                    className="input-field"
-                    value={formData.isVeg ? 'veg' : 'non-veg'}
-                    onChange={(e) => setFormData({ ...formData, isVeg: e.target.value === 'veg' })}
-                  >
-                    <option value="veg">Vegetarian (Veg)</option>
-                    <option value="non-veg">Non-Vegetarian</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '6px' }}>
-                    Est. Cooking Time (Mins)
-                  </label>
-                  <input
-                    type="number"
-                    min="1"
-                    className="input-field"
-                    value={formData.preparationTime}
-                    onChange={(e) => setFormData({ ...formData, preparationTime: e.target.value })}
-                  />
+                  <div>
+                    <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '6px' }}>
+                      Est. Cooking Time (Mins)
+                    </label>
+                    <input
+                      type="number"
+                      min="1"
+                      className="input-field"
+                      value={formData.preparationTime}
+                      onChange={(e) => setFormData({ ...formData, preparationTime: e.target.value })}
+                    />
+                  </div>
                 </div>
               </div>
 
-              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '12px' }}>
+              <div className="modal-footer">
                 <button type="button" className="btn-secondary" onClick={() => setIsModalOpen(false)}>
                   Cancel
                 </button>
@@ -489,6 +579,19 @@ export const MenuManagerPage = () => {
           </div>
         </div>
       )}
+
+      <ConfirmDialog
+        isOpen={Boolean(deleteTarget)}
+        title="Delete Menu Dish?"
+        message={deleteTarget ? `Permanently delete "${deleteTarget.name}" from the restaurant menu? This cannot be undone.` : ''}
+        confirmLabel="Delete Dish"
+        onCancel={() => setDeleteTarget(null)}
+        onConfirm={() => {
+          const target = deleteTarget;
+          setDeleteTarget(null);
+          if (target) handleDelete(target);
+        }}
+      />
     </div>
   );
 };

@@ -5,25 +5,29 @@ import {
   Printer,
   QrCode,
   Users,
-  RefreshCw,
   ExternalLink,
   Trash2,
-  X,
-  Sparkles
+  X
 } from 'lucide-react';
 import { api } from '../../api/client';
+import { useAuth } from '../../context/AuthContext';
+import { useToast } from '../../components/ToastProvider';
+import { ConfirmDialog } from '../../components/ConfirmDialog';
+import { useModalBehavior } from '../../hooks/useModalBehavior';
 
 export const TablesManagerPage = () => {
+  const { user } = useAuth();
+  const isAdmin = user?.role === 'admin';
+  const toast = useToast();
   const [tables, setTables] = useState([]);
   const [loading, setLoading] = useState(true);
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [newTableNumber, setNewTableNumber] = useState('');
   const [newCapacity, setNewCapacity] = useState('4');
   const [modalError, setModalError] = useState('');
+  const [deleteTarget, setDeleteTarget] = useState(null);
 
-  // Custom QR Base URL modal
-  const [customBaseUrl, setCustomBaseUrl] = useState('');
-  const [selectedTableForUrl, setSelectedTableForUrl] = useState(null);
+  useModalBehavior(isAddModalOpen, () => setIsAddModalOpen(false));
 
   const fetchTables = async () => {
     try {
@@ -33,7 +37,7 @@ export const TablesManagerPage = () => {
         setTables(res.data);
       }
     } catch (err) {
-      console.error('Failed to load tables:', err);
+      toast.error('Failed to load dining tables.');
     } finally {
       setLoading(false);
     }
@@ -56,6 +60,7 @@ export const TablesManagerPage = () => {
         setTables((prev) => [...prev, res.data].sort((a, b) => a.tableNumber - b.tableNumber));
         setIsAddModalOpen(false);
         setNewTableNumber('');
+        toast.success(`Table #${res.data.tableNumber} created with QR code`);
       }
     } catch (err) {
       setModalError(err.message || 'Failed to create table');
@@ -69,21 +74,22 @@ export const TablesManagerPage = () => {
         setTables((prev) =>
           prev.map((t) => (t.tableNumber === tableNumber ? { ...t, status: newStatus } : t))
         );
+        toast.info(`Table #${tableNumber} set to ${newStatus}`);
       }
     } catch (err) {
-      alert(`Failed to update table status: ${err.message}`);
+      toast.error(`Failed to update table status: ${err.message}`);
     }
   };
 
   const handleDeleteTable = async (tableNumber) => {
-    if (!confirm(`Are you sure you want to delete Table #${tableNumber}?`)) return;
     try {
       const res = await api.deleteTable(tableNumber);
       if (res.success) {
         setTables((prev) => prev.filter((t) => t.tableNumber !== tableNumber));
+        toast.success(`Table #${tableNumber} deleted`);
       }
     } catch (err) {
-      alert(`Failed to delete table: ${err.message}`);
+      toast.error(`Failed to delete table: ${err.message}`);
     }
   };
 
@@ -98,6 +104,10 @@ export const TablesManagerPage = () => {
 
   const handlePrintTableStand = (table) => {
     const printWindow = window.open('', '_blank');
+    if (!printWindow) {
+      toast.error('Pop-up blocked. Please allow pop-ups to print table stands.');
+      return;
+    }
     printWindow.document.write(`
       <!DOCTYPE html>
       <html>
@@ -152,21 +162,43 @@ export const TablesManagerPage = () => {
     printWindow.document.close();
   };
 
+  const getStatusSelectStyle = (status) => {
+    if (status === 'occupied') {
+      return {
+        background: 'rgba(239, 68, 68, 0.16)',
+        color: '#f87171',
+        border: '1px solid rgba(239, 68, 68, 0.34)'
+      };
+    }
+    if (status === 'reserved') {
+      return {
+        background: 'rgba(245, 158, 11, 0.16)',
+        color: '#fbbf24',
+        border: '1px solid rgba(245, 158, 11, 0.34)'
+      };
+    }
+    return {
+      background: 'rgba(34, 197, 94, 0.16)',
+      color: 'var(--veg-color)',
+      border: '1px solid rgba(34, 197, 94, 0.34)'
+    };
+  };
+
   return (
     <div>
       {/* Header & Add Button */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px', flexWrap: 'wrap', gap: '14px' }}>
+      <div className="page-header">
         <div>
-          <h1 style={{ fontSize: '26px', fontWeight: 800 }}>Tables & QR Code Center</h1>
-          <p style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>
-            Manage dining tables, print tabletop QR stands, and monitor occupancy
-          </p>
+          <h1 className="page-title">Tables & QR Code Center</h1>
+          <p className="page-subtitle">Manage dining tables, print tabletop QR stands, and monitor occupancy</p>
         </div>
 
-        <button className="btn-primary" onClick={() => setIsAddModalOpen(true)}>
-          <Plus size={18} />
-          <span>Add New Table</span>
-        </button>
+        {isAdmin && (
+          <button type="button" className="btn-primary" onClick={() => setIsAddModalOpen(true)}>
+            <Plus size={18} />
+            <span>Add New Table</span>
+          </button>
+        )}
       </div>
 
       {/* Tables Grid */}
@@ -188,198 +220,182 @@ export const TablesManagerPage = () => {
             gap: '16px'
           }}
         >
-          {tables.map((table) => {
-            const isOccupied = table.status === 'occupied';
-
-            return (
-              <div
-                key={table._id}
-                className="glass-panel"
-                style={{
-                  padding: '20px',
-                  display: 'flex',
-                  flexDirection: 'column',
-                  alignItems: 'center',
-                  textAlign: 'center',
-                  gap: '14px',
-                  backgroundColor: 'rgba(20, 28, 48, 0.85)'
-                }}
-              >
-                {/* Table Header */}
-                <div style={{ width: '100%', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                    <Users size={16} style={{ color: 'var(--text-muted)' }} />
-                    <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>Seats {table.capacity}</span>
-                  </div>
-
-                  <select
-                    value={table.status}
-                    onChange={(e) => handleUpdateStatus(table.tableNumber, e.target.value)}
-                    style={{
-                      background: isOccupied ? 'rgba(239, 68, 68, 0.15)' : 'rgba(34, 197, 94, 0.15)',
-                      color: isOccupied ? '#f87171' : 'var(--veg-color)',
-                      border: `1px solid ${isOccupied ? 'rgba(239, 68, 68, 0.3)' : 'rgba(34, 197, 94, 0.3)'}`,
-                      padding: '4px 8px',
-                      borderRadius: 'var(--radius-full)',
-                      fontSize: '11px',
-                      fontWeight: 700,
-                      outline: 'none',
-                      cursor: 'pointer'
-                    }}
-                  >
-                    <option value="available">Available</option>
-                    <option value="occupied">Occupied</option>
-                    <option value="reserved">Reserved</option>
-                  </select>
+          {tables.map((table) => (
+            <div
+              key={table._id}
+              className="glass-panel"
+              style={{
+                padding: '18px',
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                textAlign: 'center',
+                gap: '14px',
+                backgroundColor: 'rgba(20, 28, 48, 0.88)'
+              }}
+            >
+              {/* Table Header */}
+              <div style={{ width: '100%', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <Users size={15} style={{ color: 'var(--text-muted)' }} />
+                  <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>Seats {table.capacity}</span>
                 </div>
 
-                {/* Table Number Title */}
-                <div>
-                  <h3 style={{ fontSize: '20px', fontWeight: 800 }}>Table #{table.tableNumber}</h3>
-                  <a
-                    href={`/table/${table.tableNumber}`}
-                    target="_blank"
-                    rel="noreferrer"
-                    style={{
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      gap: '4px',
-                      fontSize: '12px',
-                      color: 'var(--accent-primary)',
-                      marginTop: '2px'
-                    }}
-                  >
-                    <span>Open Customer View</span>
-                    <ExternalLink size={12} />
-                  </a>
-                </div>
-
-                {/* QR Code Container */}
-                <div
+                <select
+                  aria-label={`Table ${table.tableNumber} status`}
+                  value={table.status}
+                  onChange={(e) => handleUpdateStatus(table.tableNumber, e.target.value)}
                   style={{
-                    background: '#ffffff',
-                    padding: '12px',
-                    borderRadius: 'var(--radius-md)',
-                    boxShadow: '0 4px 16px rgba(0,0,0,0.4)',
-                    width: '180px',
-                    height: '180px',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center'
+                    ...getStatusSelectStyle(table.status),
+                    padding: '4px 10px',
+                    borderRadius: 'var(--radius-full)',
+                    fontSize: '11px',
+                    fontWeight: 700,
+                    outline: 'none',
+                    cursor: 'pointer'
                   }}
                 >
-                  <img
-                    src={table.qrCodeDataUrl}
-                    alt={`QR Code for Table ${table.tableNumber}`}
-                    style={{ width: '100%', height: '100%', objectFit: 'contain' }}
-                  />
-                </div>
+                  <option value="available">Available</option>
+                  <option value="occupied">Occupied</option>
+                  <option value="reserved">Reserved</option>
+                </select>
+              </div>
 
-                {/* Actions: Download QR & Print Stand */}
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', width: '100%' }}>
-                  <button
-                    className="btn-secondary"
-                    onClick={() => handleDownloadQR(table)}
-                    style={{ fontSize: '12px', padding: '8px' }}
-                    title="Download PNG for menu card printing"
-                  >
-                    <Download size={14} />
-                    <span>Download</span>
-                  </button>
+              {/* Table Number Title */}
+              <div>
+                <h3 style={{ fontSize: '20px', fontWeight: 800 }}>Table #{table.tableNumber}</h3>
+                <a
+                  href={`/table/${table.tableNumber}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '4px',
+                    fontSize: '12px',
+                    color: 'var(--accent-primary)',
+                    marginTop: '3px'
+                  }}
+                >
+                  <span>Open Customer View</span>
+                  <ExternalLink size={12} />
+                </a>
+              </div>
 
-                  <button
-                    className="btn-secondary"
-                    onClick={() => handlePrintTableStand(table)}
-                    style={{ fontSize: '12px', padding: '8px', background: 'rgba(245, 158, 11, 0.12)', color: 'var(--accent-primary)', borderColor: 'rgba(245, 158, 11, 0.3)' }}
-                    title="Print tabletop tent card stand"
-                  >
-                    <Printer size={14} />
-                    <span>Print Stand</span>
-                  </button>
-                </div>
+              {/* QR Code Container */}
+              <div
+                style={{
+                  background: '#ffffff',
+                  padding: '12px',
+                  borderRadius: 'var(--radius-md)',
+                  boxShadow: '0 4px 16px rgba(0,0,0,0.4)',
+                  width: '176px',
+                  height: '176px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center'
+                }}
+              >
+                <img
+                  src={table.qrCodeDataUrl}
+                  alt={`QR Code for Table ${table.tableNumber}`}
+                  style={{ width: '100%', height: '100%', objectFit: 'contain' }}
+                />
+              </div>
 
-                {/* Delete Table */}
+              {/* Actions */}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', width: '100%' }}>
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  onClick={() => handleDownloadQR(table)}
+                  style={{ fontSize: '12px', padding: '8px' }}
+                  title="Download PNG for menu card printing"
+                >
+                  <Download size={14} />
+                  <span>Download</span>
+                </button>
+
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  onClick={() => handlePrintTableStand(table)}
+                  style={{ fontSize: '12px', padding: '8px', background: 'rgba(245, 158, 11, 0.14)', color: 'var(--accent-primary)', borderColor: 'rgba(245, 158, 11, 0.34)' }}
+                  title="Print tabletop tent card stand"
+                >
+                  <Printer size={14} />
+                  <span>Print Stand</span>
+                </button>
+              </div>
+
+              {isAdmin && (
                 <div style={{ width: '100%', display: 'flex', justifyContent: 'flex-end' }}>
                   <button
-                    onClick={() => handleDeleteTable(table.tableNumber)}
-                    style={{ color: 'var(--text-muted)', fontSize: '12px', display: 'flex', alignItems: 'center', gap: '4px' }}
+                    type="button"
+                    onClick={() => setDeleteTarget(table.tableNumber)}
+                    style={{ color: 'var(--text-muted)', fontSize: '12px', display: 'inline-flex', alignItems: 'center', gap: '4px', padding: '4px' }}
                   >
                     <Trash2 size={13} />
                     <span>Delete</span>
                   </button>
                 </div>
-              </div>
-            );
-          })}
+              )}
+            </div>
+          ))}
         </div>
       )}
 
       {/* Add Table Modal */}
       {isAddModalOpen && (
-        <div
-          style={{
-            position: 'fixed',
-            inset: 0,
-            zIndex: 100,
-            backgroundColor: 'rgba(0,0,0,0.75)',
-            backdropFilter: 'blur(8px)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            padding: '20px'
-          }}
-          onClick={() => setIsAddModalOpen(false)}
-        >
-          <div
-            className="glass-panel animate-fade-in"
-            style={{ width: '100%', maxWidth: '400px', backgroundColor: '#0f172a', padding: '24px' }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '18px' }}>
+        <div className="modal-overlay" onClick={() => setIsAddModalOpen(false)} role="dialog" aria-modal="true" aria-label="Add restaurant table">
+          <div className="modal-panel animate-fade-in" style={{ maxWidth: '420px' }} onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
               <h2 style={{ fontSize: '18px', fontWeight: 800 }}>Add Restaurant Table</h2>
-              <button className="btn-icon" onClick={() => setIsAddModalOpen(false)}>
+              <button type="button" className="btn-icon" onClick={() => setIsAddModalOpen(false)} aria-label="Close modal">
                 <X size={18} />
               </button>
             </div>
 
-            {modalError && (
-              <div style={{ padding: '8px 12px', borderRadius: '6px', background: 'rgba(239,68,68,0.15)', color: '#f87171', fontSize: '13px', marginBottom: '14px' }}>
-                {modalError}
-              </div>
-            )}
+            <form onSubmit={handleAddTable}>
+              <div className="modal-body" style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                {modalError && (
+                  <div role="alert" style={{ padding: '10px 12px', borderRadius: '8px', background: 'rgba(239,68,68,0.15)', border: '1px solid rgba(239,68,68,0.35)', color: '#fca5a5', fontSize: '13px' }}>
+                    {modalError}
+                  </div>
+                )}
 
-            <form onSubmit={handleAddTable} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-              <div>
-                <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '6px' }}>
-                  Table Number
-                </label>
-                <input
-                  type="number"
-                  min="1"
-                  required
-                  className="input-field"
-                  placeholder="e.g. 9"
-                  value={newTableNumber}
-                  onChange={(e) => setNewTableNumber(e.target.value)}
-                />
+                <div>
+                  <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '6px' }}>
+                    Table Number
+                  </label>
+                  <input
+                    type="number"
+                    min="1"
+                    required
+                    className="input-field"
+                    placeholder="e.g. 9"
+                    value={newTableNumber}
+                    onChange={(e) => setNewTableNumber(e.target.value)}
+                  />
+                </div>
+
+                <div>
+                  <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '6px' }}>
+                    Seating Capacity
+                  </label>
+                  <input
+                    type="number"
+                    min="1"
+                    required
+                    className="input-field"
+                    placeholder="e.g. 4"
+                    value={newCapacity}
+                    onChange={(e) => setNewCapacity(e.target.value)}
+                  />
+                </div>
               </div>
 
-              <div>
-                <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '6px' }}>
-                  Seating Capacity
-                </label>
-                <input
-                  type="number"
-                  min="1"
-                  required
-                  className="input-field"
-                  placeholder="e.g. 4"
-                  value={newCapacity}
-                  onChange={(e) => setNewCapacity(e.target.value)}
-                />
-              </div>
-
-              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '10px' }}>
+              <div className="modal-footer">
                 <button type="button" className="btn-secondary" onClick={() => setIsAddModalOpen(false)}>
                   Cancel
                 </button>
@@ -391,6 +407,19 @@ export const TablesManagerPage = () => {
           </div>
         </div>
       )}
+
+      <ConfirmDialog
+        isOpen={deleteTarget !== null}
+        title="Delete Dining Table?"
+        message={`Are you sure you want to delete Table #${deleteTarget} and invalidate its QR stand?`}
+        confirmLabel="Delete Table"
+        onCancel={() => setDeleteTarget(null)}
+        onConfirm={() => {
+          const num = deleteTarget;
+          setDeleteTarget(null);
+          if (num !== null) handleDeleteTable(num);
+        }}
+      />
     </div>
   );
 };

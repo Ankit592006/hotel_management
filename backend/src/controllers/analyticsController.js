@@ -1,28 +1,100 @@
 const Order = require('../models/Order');
 
-// @desc    Get sales and order analytics
+// Compute start of today in the restaurant's local timezone (defaults to IST UTC+5:30 = +330 mins)
+const getRestaurantTodayStartUTC = () => {
+  const offsetMinutes = Number(process.env.RESTAURANT_TZ_OFFSET_MINUTES ?? 330);
+  const nowUtcMs = Date.now();
+  const localNow = new Date(nowUtcMs + offsetMinutes * 60 * 1000);
+  localNow.setUTCHours(0, 0, 0, 0);
+  return new Date(localNow.getTime() - offsetMinutes * 60 * 1000);
+};
+
+// @desc    Get sales and order analytics (MongoDB aggregation, timezone-aware)
 // @route   GET /api/analytics
 // @access  Private (Admin)
 const getAnalytics = async (req, res, next) => {
   try {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
+    const todayStart = getRestaurantTodayStartUTC();
 
-    // 1. Total Metrics
-    const allOrders = await Order.find({ orderStatus: { $ne: 'Cancelled' } });
-    const totalOrdersCount = allOrders.length;
-    const totalRevenue = allOrders
-      .filter(o => o.paymentStatus === 'Paid')
-      .reduce((sum, o) => sum + o.totalAmount, 0);
+    const [result] = await Order.aggregate([
+      {
+        $facet: {
+          summary: [
+            { $match: { orderStatus: { $ne: 'Cancelled' } } },
+            {
+              $group: {
+                _id: null,
+                totalOrdersCount: { $sum: 1 },
+                totalRevenue: {
+                  $sum: { $cond: [{ $eq: ['$paymentStatus', 'Paid'] }, '$totalAmount', 0] }
+                },
+                todayOrdersCount: {
+                  $sum: { $cond: [{ $gte: ['$createdAt', todayStart] }, 1, 0] }
+                },
+                todayRevenue: {
+                  $sum: {
+                    $cond: [
+                      { $and: [{ $gte: ['$createdAt', todayStart] }, { $eq: ['$paymentStatus', 'Paid'] }] },
+                      '$totalAmount',
+                      0
+                    ]
+                  }
+                },
+                razorpayCount: {
+                  $sum: { $cond: [{ $eq: ['$paymentMethod', 'Razorpay'] }, 1, 0] }
+                },
+                counterCount: {
+                  $sum: { $cond: [{ $eq: ['$paymentMethod', 'Counter'] }, 1, 0] }
+                },
+                paidCount: {
+                  $sum: { $cond: [{ $eq: ['$paymentStatus', 'Paid'] }, 1, 0] }
+                },
+                unpaidCount: {
+                  $sum: { $cond: [{ $ne: ['$paymentStatus', 'Paid'] }, 1, 0] }
+                }
+              }
+            }
+          ],
+          statusCounts: [
+            { $group: { _id: '$orderStatus', count: { $sum: 1 } } }
+          ],
+          popularItems: [
+            { $match: { orderStatus: { $ne: 'Cancelled' } } },
+            { $unwind: '$items' },
+            {
+              $group: {
+                _id: '$items.name',
+                totalOrdered: { $sum: '$items.quantity' },
+                // Count revenue strictly from Paid orders so it matches totalRevenue
+                revenueGenerated: {
+                  $sum: {
+                    $cond: [
+                      { $eq: ['$paymentStatus', 'Paid'] },
+                      { $multiply: ['$items.price', '$items.quantity'] },
+                      0
+                    ]
+                  }
+                }
+              }
+            },
+            { $sort: { totalOrdered: -1 } },
+            { $limit: 6 }
+          ]
+        }
+      }
+    ]);
 
-    // 2. Today's Metrics
-    const todayOrders = allOrders.filter(o => new Date(o.createdAt) >= today);
-    const todayOrdersCount = todayOrders.length;
-    const todayRevenue = todayOrders
-      .filter(o => o.paymentStatus === 'Paid')
-      .reduce((sum, o) => sum + o.totalAmount, 0);
+    const summary = (result && result.summary && result.summary[0]) || {
+      totalOrdersCount: 0,
+      totalRevenue: 0,
+      todayOrdersCount: 0,
+      todayRevenue: 0,
+      razorpayCount: 0,
+      counterCount: 0,
+      paidCount: 0,
+      unpaidCount: 0
+    };
 
-    // 3. Status Counts
     const statusCounts = {
       Pending: 0,
       Accepted: 0,
@@ -32,57 +104,30 @@ const getAnalytics = async (req, res, next) => {
       Cancelled: 0
     };
 
-    const rawStatusCounts = await Order.aggregate([
-      { $group: { _id: '$orderStatus', count: { $sum: 1 } } }
-    ]);
-
-    rawStatusCounts.forEach(item => {
+    (result?.statusCounts || []).forEach((item) => {
       if (statusCounts[item._id] !== undefined) {
         statusCounts[item._id] = item.count;
       }
     });
 
-    // 4. Payment breakdown
     const paymentBreakdown = {
-      Razorpay: 0,
-      Counter: 0,
-      Paid: 0,
-      Unpaid: 0
+      Razorpay: summary.razorpayCount,
+      Counter: summary.counterCount,
+      Paid: summary.paidCount,
+      Unpaid: summary.unpaidCount
     };
-
-    allOrders.forEach(o => {
-      if (o.paymentMethod === 'Razorpay') paymentBreakdown.Razorpay++;
-      if (o.paymentMethod === 'Counter') paymentBreakdown.Counter++;
-      if (o.paymentStatus === 'Paid') paymentBreakdown.Paid++;
-      else paymentBreakdown.Unpaid++;
-    });
-
-    // 5. Popular Items (Top 5)
-    const popularItemsAggregation = await Order.aggregate([
-      { $match: { orderStatus: { $ne: 'Cancelled' } } },
-      { $unwind: '$items' },
-      {
-        $group: {
-          _id: '$items.name',
-          totalOrdered: { $sum: '$items.quantity' },
-          revenueGenerated: { $sum: { $multiply: ['$items.price', '$items.quantity'] } }
-        }
-      },
-      { $sort: { totalOrdered: -1 } },
-      { $limit: 6 }
-    ]);
 
     res.json({
       success: true,
       data: {
-        totalRevenue,
-        todayRevenue,
-        totalOrdersCount,
-        todayOrdersCount,
+        totalRevenue: summary.totalRevenue,
+        todayRevenue: summary.todayRevenue,
+        totalOrdersCount: summary.totalOrdersCount,
+        todayOrdersCount: summary.todayOrdersCount,
         statusCounts,
         paymentBreakdown,
-        popularItems: popularItemsAggregation,
-        averageOrderValue: totalOrdersCount > 0 ? Math.round(totalRevenue / (paymentBreakdown.Paid || 1)) : 0
+        popularItems: result?.popularItems || [],
+        averageOrderValue: summary.paidCount > 0 ? Math.round(summary.totalRevenue / summary.paidCount) : 0
       }
     });
   } catch (error) {

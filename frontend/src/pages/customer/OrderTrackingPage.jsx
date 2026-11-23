@@ -8,10 +8,12 @@ import {
   CreditCard,
   ArrowLeft,
   ShieldCheck,
-  Sparkles,
-  Receipt
+  Loader2,
+  Receipt,
+  XCircle
 } from 'lucide-react';
 import { useSocket } from '../../context/SocketContext';
+import { useToast } from '../../components/ToastProvider';
 import { api } from '../../api/client';
 import confetti from 'canvas-confetti';
 
@@ -25,6 +27,7 @@ const STATUS_STEPS = [
 
 export const OrderTrackingPage = ({ orderId, onBackToMenu }) => {
   const { socket, joinOrder } = useSocket();
+  const toast = useToast();
   const [order, setOrder] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -60,28 +63,42 @@ export const OrderTrackingPage = ({ orderId, onBackToMenu }) => {
 
     const handleStatusUpdate = (data) => {
       if (data.orderId === orderId || (order && data._id === order._id)) {
-        setOrder((prev) => (prev ? { ...prev, orderStatus: data.orderStatus || data.status } : prev));
-        confetti({ particleCount: 40, spread: 50, origin: { y: 0.6 } });
+        const nextStatus = data.orderStatus || data.status;
+        setOrder((prev) => (prev ? { ...prev, orderStatus: nextStatus } : prev));
+        if (nextStatus !== 'Cancelled') {
+          confetti({ particleCount: 40, spread: 50, origin: { y: 0.6 } });
+        }
       }
     };
 
     const handlePaymentUpdate = (data) => {
       if (data.orderId === orderId) {
-        setOrder((prev) => (prev ? { ...prev, paymentStatus: data.paymentStatus, razorpayPaymentId: data.razorpayPaymentId } : prev));
-        confetti({ particleCount: 60, spread: 60 });
+        setOrder((prev) =>
+          prev
+            ? {
+                ...prev,
+                paymentStatus: data.paymentStatus,
+                razorpayPaymentId: data.razorpayPaymentId || prev.razorpayPaymentId
+              }
+            : prev
+        );
+        if (data.paymentStatus === 'Paid') {
+          confetti({ particleCount: 60, spread: 60 });
+        }
       }
     };
 
     socket.on('order_status_updated', handleStatusUpdate);
     socket.on('payment_success', handlePaymentUpdate);
+    socket.on('payment_status_updated', handlePaymentUpdate);
 
     return () => {
       socket.off('order_status_updated', handleStatusUpdate);
       socket.off('payment_success', handlePaymentUpdate);
+      socket.off('payment_status_updated', handlePaymentUpdate);
     };
   }, [socket, orderId, order]);
 
-  // Handle Pay Online via Razorpay if customer decides to pay from table
   const handlePayNow = async () => {
     if (!order) return;
     setIsPaying(true);
@@ -99,40 +116,46 @@ export const OrderTrackingPage = ({ orderId, onBackToMenu }) => {
           description: `Order #${order.orderNumber}`,
           order_id: razorpayOrderId,
           handler: async (response) => {
-            await api.verifyPayment({
-              orderId: order._id,
-              razorpay_order_id: response.razorpay_order_id,
-              razorpay_payment_id: response.razorpay_payment_id,
-              razorpay_signature: response.razorpay_signature
-            });
-            confetti({ particleCount: 70, spread: 60 });
-            setOrder((prev) => ({
-              ...prev,
-              paymentStatus: 'Paid',
-              razorpayPaymentId: response.razorpay_payment_id
-            }));
+            try {
+              await api.verifyPayment({
+                orderId: order._id,
+                razorpay_order_id: response.razorpay_order_id,
+                razorpay_payment_id: response.razorpay_payment_id,
+                razorpay_signature: response.razorpay_signature
+              });
+              confetti({ particleCount: 70, spread: 60 });
+              toast.success('Payment verified successfully!');
+              setOrder((prev) => ({
+                ...prev,
+                paymentStatus: 'Paid',
+                razorpayPaymentId: response.razorpay_payment_id
+              }));
+            } catch (err) {
+              toast.error('Payment verification failed. Please inform restaurant staff.');
+            }
           },
           theme: { color: '#f59e0b' }
         };
         const rzp = new window.Razorpay(options);
         rzp.open();
       } else {
-        // Simulated payment
+        const simPayId = `pay_sim_${Date.now()}`;
         await api.verifyPayment({
           orderId: order._id,
           razorpay_order_id: razorpayOrderId,
-          razorpay_payment_id: `pay_sim_${Date.now()}`,
+          razorpay_payment_id: simPayId,
           razorpay_signature: 'simulated_signature'
         });
         confetti({ particleCount: 70, spread: 60 });
+        toast.success('Payment completed!');
         setOrder((prev) => ({
           ...prev,
           paymentStatus: 'Paid',
-          razorpayPaymentId: `pay_sim_${Date.now()}`
+          razorpayPaymentId: simPayId
         }));
       }
     } catch (err) {
-      alert('Payment processing failed. Please ask the waiter for assistance.');
+      toast.error('Payment processing failed. Please ask the waiter for assistance.');
     } finally {
       setIsPaying(false);
     }
@@ -140,49 +163,60 @@ export const OrderTrackingPage = ({ orderId, onBackToMenu }) => {
 
   if (loading) {
     return (
-      <div className="customer-layout" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
-        <Sparkles className="animate-spin" size={32} style={{ color: 'var(--accent-primary)', marginBottom: '16px' }} />
-        <p style={{ color: 'var(--text-secondary)' }}>Retrieving live order details...</p>
+      <div className="customer-layout" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '40px 20px' }}>
+        <Loader2 className="animate-spin" size={32} style={{ color: 'var(--accent-primary)', marginBottom: '14px' }} />
+        <p style={{ color: 'var(--text-secondary)', fontSize: '14px' }}>Retrieving live order details...</p>
       </div>
     );
   }
 
   if (error || !order) {
     return (
-      <div className="customer-layout" style={{ padding: '40px 20px', textAlign: 'center' }}>
-        <h2 style={{ fontSize: '18px', color: '#f87171', marginBottom: '12px' }}>{error || 'Order not found'}</h2>
-        <button className="btn-secondary" onClick={onBackToMenu}>
+      <div className="customer-layout" style={{ padding: '48px 20px', textAlign: 'center' }}>
+        <h2 style={{ fontSize: '18px', color: '#f87171', marginBottom: '14px' }}>{error || 'Order not found'}</h2>
+        <button type="button" className="btn-secondary" onClick={() => onBackToMenu(1)}>
           Back to Menu
         </button>
       </div>
     );
   }
 
+  const isCancelled = order.orderStatus === 'Cancelled';
   const currentStepIndex = STATUS_STEPS.findIndex((s) => s.key === order.orderStatus);
 
   return (
     <div className="customer-layout">
       {/* Top Banner */}
-      <div
+      <header
         className="glass-header"
         style={{
-          padding: '16px 20px',
+          padding: '14px 18px',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'space-between',
+          gap: '10px',
           position: 'sticky',
           top: 0,
           zIndex: 40
         }}
       >
         <button
-          onClick={onBackToMenu}
-          style={{ display: 'flex', alignItems: 'center', gap: '6px', color: 'var(--text-secondary)', fontSize: '14px', fontWeight: 600 }}
+          type="button"
+          onClick={() => onBackToMenu(order.tableNumber)}
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: '6px',
+            color: 'var(--text-secondary)',
+            fontSize: '14px',
+            fontWeight: 600,
+            minHeight: '36px'
+          }}
         >
           <ArrowLeft size={18} />
           <span>Menu</span>
         </button>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
           <span className="status-pill pending" style={{ fontSize: '11px' }}>
             Table #{order.tableNumber}
           </span>
@@ -190,60 +224,70 @@ export const OrderTrackingPage = ({ orderId, onBackToMenu }) => {
             #{order.orderNumber}
           </span>
         </div>
-      </div>
+      </header>
 
-      <div style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '20px', maxWidth: '640px', margin: '0 auto', width: '100%' }}>
+      <div style={{ padding: '18px 16px', display: 'flex', flexDirection: 'column', gap: '18px', maxWidth: '640px', margin: '0 auto', width: '100%' }}>
         {/* Order Status Hero Card */}
         <div
           className="glass-panel"
           style={{
             padding: '24px 20px',
             textAlign: 'center',
-            background: 'linear-gradient(180deg, rgba(245, 158, 11, 0.08) 0%, rgba(15, 23, 42, 0.8) 100%)',
-            border: '1px solid rgba(245, 158, 11, 0.25)'
+            background: isCancelled
+              ? 'linear-gradient(180deg, rgba(239, 68, 68, 0.12) 0%, rgba(15, 23, 42, 0.88) 100%)'
+              : 'linear-gradient(180deg, rgba(245, 158, 11, 0.09) 0%, rgba(15, 23, 42, 0.85) 100%)',
+            border: isCancelled ? '1px solid rgba(239, 68, 68, 0.35)' : '1px solid rgba(245, 158, 11, 0.28)'
           }}
         >
           <div
             style={{
-              width: '64px',
-              height: '64px',
+              width: '62px',
+              height: '62px',
               borderRadius: '50%',
-              background: 'var(--accent-gradient)',
+              background: isCancelled
+                ? 'linear-gradient(135deg, #ef4444 0%, #dc2626 100%)'
+                : 'var(--accent-gradient)',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              margin: '0 auto 16px',
-              color: '#0f172a',
-              boxShadow: '0 8px 24px var(--accent-glow)'
+              margin: '0 auto 14px',
+              color: isCancelled ? '#ffffff' : '#0f172a',
+              boxShadow: isCancelled ? '0 8px 24px rgba(239, 68, 68, 0.35)' : '0 8px 24px var(--accent-glow)'
             }}
           >
-            {order.orderStatus === 'Preparing' ? (
-              <ChefHat size={32} />
+            {isCancelled ? (
+              <XCircle size={32} />
+            ) : order.orderStatus === 'Preparing' ? (
+              <ChefHat size={30} />
             ) : order.orderStatus === 'Ready' ? (
-              <UtensilsCrossed size={32} />
+              <UtensilsCrossed size={30} />
             ) : order.orderStatus === 'Served' ? (
-              <CheckCircle2 size={32} />
+              <CheckCircle2 size={30} />
             ) : (
-              <Clock size={32} />
+              <Clock size={30} />
             )}
           </div>
 
           <h2 style={{ fontSize: '20px', fontWeight: 800, marginBottom: '4px' }}>
-            {order.orderStatus === 'Served'
+            {isCancelled
+              ? 'Order Cancelled'
+              : order.orderStatus === 'Served'
               ? 'Enjoy Your Meal!'
               : order.orderStatus === 'Ready'
               ? 'Your Order is Ready!'
               : order.orderStatus === 'Preparing'
-              ? 'Chef Marco is Cooking!'
+              ? 'Kitchen is Preparing Your Order'
               : order.orderStatus === 'Accepted'
               ? 'Kitchen Confirmed Order'
               : 'Order Sent to Kitchen'}
           </h2>
           <p style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>
-            Status updates automatically in real-time
+            {isCancelled
+              ? 'This order was cancelled. Please contact restaurant staff if you have questions.'
+              : 'Status updates automatically in real-time'}
           </p>
 
-          {order.orderStatus !== 'Served' && order.orderStatus !== 'Cancelled' && (
+          {!isCancelled && order.orderStatus !== 'Served' && (
             <div
               style={{
                 display: 'inline-flex',
@@ -252,7 +296,7 @@ export const OrderTrackingPage = ({ orderId, onBackToMenu }) => {
                 marginTop: '14px',
                 padding: '6px 14px',
                 borderRadius: 'var(--radius-full)',
-                background: 'rgba(255, 255, 255, 0.05)',
+                background: 'rgba(255, 255, 255, 0.06)',
                 border: '1px solid var(--border-subtle)',
                 fontSize: '12px',
                 color: 'var(--accent-primary)',
@@ -265,79 +309,78 @@ export const OrderTrackingPage = ({ orderId, onBackToMenu }) => {
           )}
         </div>
 
-        {/* Live Stepper Tracker */}
-        <div className="glass-panel" style={{ padding: '20px 18px' }}>
-          <h3 style={{ fontSize: '14px', fontWeight: 700, marginBottom: '18px', color: 'var(--text-secondary)' }}>
-            LIVE ORDER TIMELINE
-          </h3>
+        {/* Live Stepper Tracker (hidden when cancelled) */}
+        {!isCancelled && (
+          <div className="glass-panel" style={{ padding: '20px 18px' }}>
+            <h3 style={{ fontSize: '13px', fontWeight: 700, marginBottom: '18px', color: 'var(--text-secondary)', letterSpacing: '0.04em' }}>
+              LIVE ORDER TIMELINE
+            </h3>
 
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', position: 'relative' }}>
-            {STATUS_STEPS.map((step, idx) => {
-              const isDone = currentStepIndex > idx;
-              const isCurrent = currentStepIndex === idx;
-              const StepIcon = step.icon;
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', position: 'relative' }}>
+              {STATUS_STEPS.map((step, idx) => {
+                const isDone = currentStepIndex > idx;
+                const isCurrent = currentStepIndex === idx;
+                const StepIcon = step.icon;
 
-              return (
-                <div key={step.key} style={{ display: 'flex', alignItems: 'flex-start', gap: '14px', position: 'relative' }}>
-                  {/* Connecting Line */}
-                  {idx < STATUS_STEPS.length - 1 && (
+                return (
+                  <div key={step.key} style={{ display: 'flex', alignItems: 'flex-start', gap: '14px', position: 'relative' }}>
+                    {idx < STATUS_STEPS.length - 1 && (
+                      <div
+                        style={{
+                          position: 'absolute',
+                          left: '17px',
+                          top: '36px',
+                          bottom: '-18px',
+                          width: '2px',
+                          backgroundColor: isDone ? 'var(--accent-primary)' : 'rgba(255, 255, 255, 0.1)',
+                          zIndex: 1
+                        }}
+                      />
+                    )}
+
                     <div
                       style={{
-                        position: 'absolute',
-                        left: '17px',
-                        top: '34px',
-                        bottom: '-16px',
-                        width: '2px',
-                        backgroundColor: isDone ? 'var(--accent-primary)' : 'rgba(255, 255, 255, 0.1)',
-                        zIndex: 1
-                      }}
-                    />
-                  )}
-
-                  {/* Step Node */}
-                  <div
-                    style={{
-                      width: '36px',
-                      height: '36px',
-                      borderRadius: '50%',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      background: isDone
-                        ? 'var(--accent-primary)'
-                        : isCurrent
-                        ? 'rgba(245, 158, 11, 0.2)'
-                        : 'rgba(255, 255, 255, 0.05)',
-                      color: isDone ? '#0f172a' : isCurrent ? 'var(--accent-primary)' : 'var(--text-muted)',
-                      border: `2px solid ${isDone || isCurrent ? 'var(--accent-primary)' : 'rgba(255, 255, 255, 0.1)'}`,
-                      boxShadow: isCurrent ? '0 0 15px var(--accent-glow)' : 'none',
-                      zIndex: 2,
-                      flexShrink: 0
-                    }}
-                  >
-                    <StepIcon size={18} />
-                  </div>
-
-                  {/* Step Label */}
-                  <div style={{ flex: 1 }}>
-                    <h4
-                      style={{
-                        fontSize: '14px',
-                        fontWeight: 700,
-                        color: isDone || isCurrent ? 'var(--text-primary)' : 'var(--text-muted)'
+                        width: '36px',
+                        height: '36px',
+                        borderRadius: '50%',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        background: isDone
+                          ? 'var(--accent-primary)'
+                          : isCurrent
+                          ? 'rgba(245, 158, 11, 0.2)'
+                          : 'rgba(255, 255, 255, 0.05)',
+                        color: isDone ? '#0f172a' : isCurrent ? 'var(--accent-primary)' : 'var(--text-muted)',
+                        border: `2px solid ${isDone || isCurrent ? 'var(--accent-primary)' : 'rgba(255, 255, 255, 0.12)'}`,
+                        boxShadow: isCurrent ? '0 0 15px var(--accent-glow)' : 'none',
+                        zIndex: 2,
+                        flexShrink: 0
                       }}
                     >
-                      {step.label}
-                    </h4>
-                    <p style={{ fontSize: '12px', color: isCurrent ? 'var(--accent-primary)' : 'var(--text-muted)' }}>
-                      {step.desc}
-                    </p>
+                      <StepIcon size={17} />
+                    </div>
+
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <h4
+                        style={{
+                          fontSize: '14px',
+                          fontWeight: 700,
+                          color: isDone || isCurrent ? 'var(--text-primary)' : 'var(--text-muted)'
+                        }}
+                      >
+                        {step.label}
+                      </h4>
+                      <p style={{ fontSize: '12px', color: isCurrent ? 'var(--accent-primary)' : 'var(--text-muted)' }}>
+                        {step.desc}
+                      </p>
+                    </div>
                   </div>
-                </div>
-              );
-            })}
+                );
+              })}
+            </div>
           </div>
-        </div>
+        )}
 
         {/* Payment Status & Action Card */}
         <div
@@ -347,22 +390,22 @@ export const OrderTrackingPage = ({ orderId, onBackToMenu }) => {
             display: 'flex',
             flexDirection: 'column',
             gap: '12px',
-            background: order.paymentStatus === 'Paid' ? 'rgba(34, 197, 94, 0.06)' : 'rgba(245, 158, 11, 0.06)',
-            border: `1px solid ${order.paymentStatus === 'Paid' ? 'rgba(34, 197, 94, 0.3)' : 'rgba(245, 158, 11, 0.3)'}`
+            background: order.paymentStatus === 'Paid' ? 'rgba(34, 197, 94, 0.07)' : 'rgba(245, 158, 11, 0.07)',
+            border: `1px solid ${order.paymentStatus === 'Paid' ? 'rgba(34, 197, 94, 0.32)' : 'rgba(245, 158, 11, 0.32)'}`
           }}
         >
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
               <CreditCard size={18} style={{ color: order.paymentStatus === 'Paid' ? 'var(--veg-color)' : 'var(--accent-primary)' }} />
               <span style={{ fontWeight: 700, fontSize: '14px' }}>Payment Status</span>
             </div>
             <span
               style={{
-                fontSize: '12px',
+                fontSize: '11px',
                 fontWeight: 800,
                 padding: '4px 10px',
                 borderRadius: 'var(--radius-full)',
-                background: order.paymentStatus === 'Paid' ? 'var(--veg-bg)' : 'rgba(245, 158, 11, 0.15)',
+                background: order.paymentStatus === 'Paid' ? 'var(--veg-bg)' : 'rgba(245, 158, 11, 0.16)',
                 color: order.paymentStatus === 'Paid' ? 'var(--veg-color)' : 'var(--accent-primary)'
               }}
             >
@@ -372,23 +415,24 @@ export const OrderTrackingPage = ({ orderId, onBackToMenu }) => {
 
           <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
             {order.paymentStatus === 'Paid' ? (
-              <span style={{ display: 'flex', alignItems: 'center', gap: '6px', color: 'var(--veg-color)' }}>
+              <span style={{ display: 'flex', alignItems: 'center', gap: '6px', color: 'var(--veg-color)', flexWrap: 'wrap' }}>
                 <ShieldCheck size={16} />
-                <span>Verified via Razorpay ({order.razorpayPaymentId || 'Completed'})</span>
+                <span>Verified ({order.razorpayPaymentId || order.paymentMethod})</span>
               </span>
             ) : (
               <span>Payment Method: {order.paymentMethod === 'Razorpay' ? 'Razorpay Online' : 'Pay at Counter'}</span>
             )}
           </div>
 
-          {order.paymentStatus !== 'Paid' && (
+          {!isCancelled && order.paymentStatus !== 'Paid' && (
             <button
+              type="button"
               className="btn-primary"
               onClick={handlePayNow}
               disabled={isPaying}
               style={{ marginTop: '4px', width: '100%', fontSize: '14px' }}
             >
-              <CreditCard size={16} />
+              {isPaying ? <Loader2 size={16} className="animate-spin" /> : <CreditCard size={16} />}
               <span>{isPaying ? 'Loading Razorpay...' : `Pay ₹${order.totalAmount} Now Online`}</span>
             </button>
           )}
@@ -403,14 +447,14 @@ export const OrderTrackingPage = ({ orderId, onBackToMenu }) => {
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', fontSize: '13px' }}>
             {order.items?.map((item, idx) => (
-              <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0 }}>
                   <span className={`diet-badge ${item.isVeg ? 'veg' : 'non-veg'}`} />
                   <span>
                     {item.name} <strong style={{ color: 'var(--text-muted)' }}>× {item.quantity}</strong>
                   </span>
                 </div>
-                <span style={{ fontWeight: 600 }}>₹{item.price * item.quantity}</span>
+                <span style={{ fontWeight: 600, whiteSpace: 'nowrap' }}>₹{item.price * item.quantity}</span>
               </div>
             ))}
 
@@ -433,8 +477,9 @@ export const OrderTrackingPage = ({ orderId, onBackToMenu }) => {
 
         {/* Action button to order more */}
         <button
+          type="button"
           className="btn-secondary"
-          onClick={onBackToMenu}
+          onClick={() => onBackToMenu(order.tableNumber)}
           style={{ width: '100%', padding: '14px', fontSize: '14px' }}
         >
           <UtensilsCrossed size={16} />
