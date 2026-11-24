@@ -73,6 +73,10 @@ export const api = {
     method: 'PATCH',
     body: JSON.stringify({ paymentStatus })
   }),
+  acceptCashPayment: (id, payload) => request(`/api/orders/${id}/accept-cash`, {
+    method: 'POST',
+    body: JSON.stringify(payload)
+  }),
 
   // Payments (Razorpay)
   createPaymentOrder: (orderId) => request('/api/payments/create-order', {

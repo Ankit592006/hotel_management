@@ -78,6 +78,8 @@ export const OrderTrackingPage = ({ orderId, onBackToMenu }) => {
             ? {
                 ...prev,
                 paymentStatus: data.paymentStatus,
+                paymentMethod: data.paymentMethod || prev.paymentMethod,
+                cashSettlement: data.cashSettlement || prev.cashSettlement,
                 razorpayPaymentId: data.razorpayPaymentId || prev.razorpayPaymentId
               }
             : prev
@@ -417,7 +419,11 @@ export const OrderTrackingPage = ({ orderId, onBackToMenu }) => {
             {order.paymentStatus === 'Paid' ? (
               <span style={{ display: 'flex', alignItems: 'center', gap: '6px', color: 'var(--veg-color)', flexWrap: 'wrap' }}>
                 <ShieldCheck size={16} />
-                <span>Verified ({order.razorpayPaymentId || order.paymentMethod})</span>
+                <span>
+                  {order.paymentMethod === 'Counter'
+                    ? `Paid at Counter (${order.cashSettlement?.mode || 'Cash'} Accepted)`
+                    : `Verified via Razorpay (${order.razorpayPaymentId || 'Completed'})`}
+                </span>
               </span>
             ) : (
               <span>Payment Method: {order.paymentMethod === 'Razorpay' ? 'Razorpay Online' : 'Pay at Counter'}</span>

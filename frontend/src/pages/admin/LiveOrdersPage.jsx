@@ -9,14 +9,16 @@ import {
   Volume2,
   Sparkles,
   RefreshCw,
-  X
+  X,
+  Banknote
 } from 'lucide-react';
 import { useSocket } from '../../context/SocketContext';
 import { useToast } from '../../components/ToastProvider';
 import { ConfirmDialog } from '../../components/ConfirmDialog';
+import { AcceptCashModal } from '../../components/AcceptCashModal';
 import { api } from '../../api/client';
 
-const STATUS_FILTERS = ['Active', 'Pending', 'Accepted', 'Preparing', 'Ready', 'Served', 'All'];
+const STATUS_FILTERS = ['Active', 'Unpaid', 'Pending', 'Accepted', 'Preparing', 'Ready', 'Served', 'All'];
 
 export const LiveOrdersPage = ({ onOrdersCountChange }) => {
   const { socket, joinAdmin, playChime } = useSocket();
@@ -27,6 +29,7 @@ export const LiveOrdersPage = ({ onOrdersCountChange }) => {
   const [newOrderAlert, setNewOrderAlert] = useState(null);
   const [busyOrderId, setBusyOrderId] = useState(null);
   const [cancelTarget, setCancelTarget] = useState(null);
+  const [cashTarget, setCashTarget] = useState(null);
 
   const fetchOrders = async () => {
     try {
@@ -48,8 +51,10 @@ export const LiveOrdersPage = ({ onOrdersCountChange }) => {
   }, []);
 
   useEffect(() => {
-    const activeCount = orders.filter((o) =>
-      ['Pending', 'Accepted', 'Preparing', 'Ready'].includes(o.orderStatus)
+    const activeCount = orders.filter(
+      (o) =>
+        ['Pending', 'Accepted', 'Preparing', 'Ready'].includes(o.orderStatus) ||
+        (o.orderStatus === 'Served' && o.paymentStatus !== 'Paid')
     ).length;
     if (onOrdersCountChange) onOrdersCountChange(activeCount);
   }, [orders, onOrdersCountChange]);
@@ -96,26 +101,31 @@ export const LiveOrdersPage = ({ onOrdersCountChange }) => {
     }
   };
 
-  const handleMarkPaid = async (orderId) => {
-    try {
-      setBusyOrderId(orderId);
-      const res = await api.updatePaymentStatus(orderId, 'Paid');
-      if (res.success) {
-        setOrders((prev) =>
-          prev.map((o) => (o._id === orderId ? { ...o, paymentStatus: 'Paid' } : o))
-        );
-        toast.success('Payment marked as Paid');
-      }
-    } catch (err) {
-      toast.error(`Failed to update payment status: ${err.message}`);
-    } finally {
-      setBusyOrderId(null);
-    }
+  const handleCashAccepted = (updatedOrder) => {
+    setOrders((prev) =>
+      prev.map((o) => (o._id === updatedOrder._id ? updatedOrder : o))
+    );
   };
+
+  const activeOrdersCount = orders.filter(
+    (o) =>
+      ['Pending', 'Accepted', 'Preparing', 'Ready'].includes(o.orderStatus) ||
+      (o.orderStatus === 'Served' && o.paymentStatus !== 'Paid')
+  ).length;
+
+  const unpaidOrdersCount = orders.filter(
+    (o) => o.orderStatus !== 'Cancelled' && o.paymentStatus !== 'Paid'
+  ).length;
 
   const filteredOrders = orders.filter((order) => {
     if (filter === 'Active') {
-      return ['Pending', 'Accepted', 'Preparing', 'Ready'].includes(order.orderStatus);
+      return (
+        ['Pending', 'Accepted', 'Preparing', 'Ready'].includes(order.orderStatus) ||
+        (order.orderStatus === 'Served' && order.paymentStatus !== 'Paid')
+      );
+    }
+    if (filter === 'Unpaid') {
+      return order.orderStatus !== 'Cancelled' && order.paymentStatus !== 'Paid';
     }
     if (filter === 'All') return true;
     return order.orderStatus === filter;
@@ -212,7 +222,12 @@ export const LiveOrdersPage = ({ onOrdersCountChange }) => {
             onClick={() => setFilter(s)}
             className={`category-pill ${filter === s ? 'active' : ''}`}
           >
-            {s} {s === 'Active' ? `(${orders.filter((o) => ['Pending', 'Accepted', 'Preparing', 'Ready'].includes(o.orderStatus)).length})` : ''}
+            {s}{' '}
+            {s === 'Active'
+              ? `(${activeOrdersCount})`
+              : s === 'Unpaid'
+              ? `(${unpaidOrdersCount})`
+              : ''}
           </button>
         ))}
       </div>
@@ -373,23 +388,29 @@ export const LiveOrdersPage = ({ onOrdersCountChange }) => {
                         >
                           UNPAID ({order.paymentMethod})
                         </span>
-                        <button
-                          type="button"
-                          disabled={isBusy}
-                          onClick={() => handleMarkPaid(order._id)}
-                          style={{
-                            fontSize: '11px',
-                            fontWeight: 700,
-                            color: '#ffffff',
-                            background: 'rgba(34, 197, 94, 0.25)',
-                            border: '1px solid rgba(34, 197, 94, 0.45)',
-                            padding: '4px 10px',
-                            borderRadius: 'var(--radius-sm)'
-                          }}
-                          title="Mark paid in cash/card at counter"
-                        >
-                          Mark Paid
-                        </button>
+                        {order.orderStatus !== 'Cancelled' && (
+                          <button
+                            type="button"
+                            disabled={isBusy}
+                            onClick={() => setCashTarget(order)}
+                            style={{
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '5px',
+                              fontSize: '12px',
+                              fontWeight: 700,
+                              color: '#052e16',
+                              background: 'linear-gradient(135deg, #22c55e 0%, #16a34a 100%)',
+                              padding: '5px 11px',
+                              borderRadius: 'var(--radius-full)',
+                              boxShadow: '0 2px 10px rgba(34, 197, 94, 0.3)'
+                            }}
+                            title="Accept Cash / Counter Payment"
+                          >
+                            <Banknote size={13} />
+                            <span>Accept Cash</span>
+                          </button>
+                        )}
                       </>
                     )}
                   </div>
@@ -468,6 +489,12 @@ export const LiveOrdersPage = ({ onOrdersCountChange }) => {
           })}
         </div>
       )}
+
+      <AcceptCashModal
+        order={cashTarget}
+        onClose={() => setCashTarget(null)}
+        onSuccess={handleCashAccepted}
+      />
 
       <ConfirmDialog
         isOpen={Boolean(cancelTarget)}

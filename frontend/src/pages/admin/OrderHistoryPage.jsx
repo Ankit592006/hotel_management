@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { Search, Eye, X, Receipt } from 'lucide-react';
+import { Search, Eye, X, Receipt, Banknote } from 'lucide-react';
 import { api } from '../../api/client';
 import { useToast } from '../../components/ToastProvider';
 import { useModalBehavior } from '../../hooks/useModalBehavior';
+import { AcceptCashModal } from '../../components/AcceptCashModal';
 
 export const OrderHistoryPage = () => {
   const toast = useToast();
@@ -12,6 +13,14 @@ export const OrderHistoryPage = () => {
   const [statusFilter, setStatusFilter] = useState('All');
   const [paymentFilter, setPaymentFilter] = useState('All');
   const [selectedOrder, setSelectedOrder] = useState(null);
+  const [cashTarget, setCashTarget] = useState(null);
+
+  const handleCashAccepted = (updatedOrder) => {
+    setOrders((prev) => prev.map((o) => (o._id === updatedOrder._id ? updatedOrder : o)));
+    if (selectedOrder && selectedOrder._id === updatedOrder._id) {
+      setSelectedOrder(updatedOrder);
+    }
+  };
 
   useModalBehavior(Boolean(selectedOrder), () => setSelectedOrder(null));
 
@@ -164,16 +173,39 @@ export const OrderHistoryPage = () => {
                     </span>
                   </td>
                   <td style={{ padding: '14px 18px', textAlign: 'right' }}>
-                    <button
-                      type="button"
-                      className="btn-icon"
-                      onClick={() => setSelectedOrder(o)}
-                      title="View Receipt"
-                      aria-label={`View receipt for order #${o.orderNumber}`}
-                      style={{ width: '36px', height: '36px' }}
-                    >
-                      <Eye size={15} />
-                    </button>
+                    <div style={{ display: 'inline-flex', alignItems: 'center', gap: '8px' }}>
+                      {o.paymentStatus !== 'Paid' && o.orderStatus !== 'Cancelled' && (
+                        <button
+                          type="button"
+                          onClick={() => setCashTarget(o)}
+                          style={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '5px',
+                            fontSize: '12px',
+                            fontWeight: 700,
+                            color: '#052e16',
+                            background: 'linear-gradient(135deg, #22c55e 0%, #16a34a 100%)',
+                            padding: '6px 11px',
+                            borderRadius: 'var(--radius-full)'
+                          }}
+                          title="Accept Cash / Counter Payment"
+                        >
+                          <Banknote size={13} />
+                          <span>Accept Cash</span>
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        className="btn-icon"
+                        onClick={() => setSelectedOrder(o)}
+                        title="View Receipt"
+                        aria-label={`View receipt for order #${o.orderNumber}`}
+                        style={{ width: '36px', height: '36px' }}
+                      >
+                        <Eye size={15} />
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))
@@ -227,15 +259,38 @@ export const OrderHistoryPage = () => {
                   </span>
                 </div>
 
-                <button
-                  type="button"
-                  className="btn-secondary"
-                  onClick={() => setSelectedOrder(o)}
-                  style={{ fontSize: '12px', padding: '6px 12px', minHeight: '34px' }}
-                >
-                  <Receipt size={14} />
-                  <span>Receipt</span>
-                </button>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  {o.paymentStatus !== 'Paid' && o.orderStatus !== 'Cancelled' && (
+                    <button
+                      type="button"
+                      onClick={() => setCashTarget(o)}
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '5px',
+                        fontSize: '12px',
+                        fontWeight: 700,
+                        color: '#052e16',
+                        background: 'linear-gradient(135deg, #22c55e 0%, #16a34a 100%)',
+                        padding: '6px 12px',
+                        minHeight: '34px',
+                        borderRadius: 'var(--radius-full)'
+                      }}
+                    >
+                      <Banknote size={14} />
+                      <span>Accept Cash</span>
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    className="btn-secondary"
+                    onClick={() => setSelectedOrder(o)}
+                    style={{ fontSize: '12px', padding: '6px 12px', minHeight: '34px' }}
+                  >
+                    <Receipt size={14} />
+                    <span>Receipt</span>
+                  </button>
+                </div>
               </div>
             </div>
           ))
@@ -283,18 +338,66 @@ export const OrderHistoryPage = () => {
                 </div>
               </div>
 
-              <div style={{ marginTop: '16px', padding: '12px', borderRadius: '10px', background: 'rgba(255,255,255,0.04)', border: '1px solid var(--border-subtle)', fontSize: '12px' }}>
+              <div style={{ marginTop: '16px', padding: '12px', borderRadius: '10px', background: 'rgba(255,255,255,0.04)', border: '1px solid var(--border-subtle)', fontSize: '12px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
                 <div><strong>Payment:</strong> {selectedOrder.paymentStatus} ({selectedOrder.paymentMethod})</div>
                 {selectedOrder.razorpayPaymentId && (
-                  <div style={{ marginTop: '4px', color: 'var(--text-muted)', wordBreak: 'break-all' }}>
+                  <div style={{ color: 'var(--text-muted)', wordBreak: 'break-all' }}>
                     Ref: {selectedOrder.razorpayPaymentId}
                   </div>
                 )}
+                {selectedOrder.cashSettlement && (
+                  <>
+                    <div style={{ color: '#4ade80' }}>
+                      Counter {selectedOrder.cashSettlement.mode} • Received ₹{selectedOrder.cashSettlement.cashReceived}
+                      {selectedOrder.cashSettlement.changeReturned > 0
+                        ? ` • Change ₹${selectedOrder.cashSettlement.changeReturned}`
+                        : ''}
+                    </div>
+                    {selectedOrder.cashSettlement.collectedByName && (
+                      <div style={{ color: 'var(--text-muted)' }}>
+                        Collected by: {selectedOrder.cashSettlement.collectedByName}
+                      </div>
+                    )}
+                    {selectedOrder.cashSettlement.notes && (
+                      <div style={{ color: 'var(--text-muted)' }}>
+                        Note: {selectedOrder.cashSettlement.notes}
+                      </div>
+                    )}
+                  </>
+                )}
               </div>
             </div>
+
+            {selectedOrder.paymentStatus !== 'Paid' && selectedOrder.orderStatus !== 'Cancelled' && (
+              <div className="modal-footer">
+                <button
+                  type="button"
+                  className="btn-primary"
+                  onClick={() => {
+                    const target = selectedOrder;
+                    setSelectedOrder(null);
+                    setCashTarget(target);
+                  }}
+                  style={{
+                    width: '100%',
+                    background: 'linear-gradient(135deg, #22c55e 0%, #16a34a 100%)',
+                    color: '#052e16'
+                  }}
+                >
+                  <Banknote size={16} />
+                  <span>Accept Cash (₹{selectedOrder.totalAmount})</span>
+                </button>
+              </div>
+            )}
           </div>
         </div>
       )}
+
+      <AcceptCashModal
+        order={cashTarget}
+        onClose={() => setCashTarget(null)}
+        onSuccess={handleCashAccepted}
+      />
     </div>
   );
 };

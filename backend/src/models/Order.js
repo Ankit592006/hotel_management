@@ -30,6 +30,45 @@ const orderItemSchema = new mongoose.Schema({
   }
 });
 
+const cashSettlementSchema = new mongoose.Schema({
+  mode: {
+    type: String,
+    enum: ['Cash', 'Card', 'UPI'],
+    default: 'Cash'
+  },
+  amountPaid: {
+    type: Number,
+    min: 0
+  },
+  cashReceived: {
+    type: Number,
+    min: 0
+  },
+  changeReturned: {
+    type: Number,
+    min: 0,
+    default: 0
+  },
+  collectedBy: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+    default: null
+  },
+  collectedByName: {
+    type: String,
+    default: ''
+  },
+  paidAt: {
+    type: Date,
+    default: null
+  },
+  notes: {
+    type: String,
+    default: '',
+    trim: true
+  }
+}, { _id: false });
+
 const orderSchema = new mongoose.Schema({
   orderNumber: {
     type: String,
@@ -81,6 +120,10 @@ const orderSchema = new mongoose.Schema({
   razorpayPaymentId: {
     type: String,
     default: ''
+  },
+  cashSettlement: {
+    type: cashSettlementSchema,
+    default: null
   },
   customerNotes: {
     type: String,

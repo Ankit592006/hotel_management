@@ -1,6 +1,7 @@
 const Order = require('../models/Order');
 const MenuItem = require('../models/MenuItem');
 const Table = require('../models/Table');
+const Payment = require('../models/Payment');
 
 const MAX_ITEMS_PER_ORDER = 50;
 const MAX_QTY_PER_ITEM = 50;
@@ -378,11 +379,127 @@ const updatePaymentStatus = async (req, res, next) => {
   }
 };
 
+// @desc    Accept Cash / Counter payment for an order with audit trail
+// @route   POST /api/orders/:id/accept-cash
+// @access  Private (Admin / Staff)
+const acceptCashPayment = async (req, res, next) => {
+  try {
+    const { mode = 'Cash', cashReceived, notes = '' } = req.body || {};
+    const validModes = ['Cash', 'Card', 'UPI'];
+
+    if (!validModes.includes(mode)) {
+      return res.status(400).json({
+        success: false,
+        message: `Invalid counter payment mode. Allowed: ${validModes.join(', ')}`
+      });
+    }
+
+    const order = await Order.findById(req.params.id);
+    if (!order) {
+      return res.status(404).json({
+        success: false,
+        message: 'Order not found'
+      });
+    }
+
+    if (order.orderStatus === 'Cancelled') {
+      return res.status(400).json({
+        success: false,
+        message: 'Cannot accept payment for a cancelled order'
+      });
+    }
+
+    if (order.paymentStatus === 'Paid') {
+      return res.status(400).json({
+        success: false,
+        message: 'Order is already paid'
+      });
+    }
+
+    let tendered = order.totalAmount;
+    let changeReturned = 0;
+
+    if (mode === 'Cash' && cashReceived !== undefined && cashReceived !== '' && cashReceived !== null) {
+      const parsedCash = Number(cashReceived);
+      if (isNaN(parsedCash) || parsedCash < order.totalAmount) {
+        return res.status(400).json({
+          success: false,
+          message: `Cash received (₹${cashReceived}) cannot be less than grand total (₹${order.totalAmount})`
+        });
+      }
+      tendered = parsedCash;
+      changeReturned = Math.round((parsedCash - order.totalAmount) * 100) / 100;
+    }
+
+    const paidAt = new Date();
+    const trimmedNotes = String(notes || '').trim().slice(0, 200);
+
+    order.paymentStatus = 'Paid';
+    order.paymentMethod = 'Counter';
+    order.cashSettlement = {
+      mode,
+      amountPaid: order.totalAmount,
+      cashReceived: tendered,
+      changeReturned,
+      collectedBy: req.user ? req.user._id : null,
+      collectedByName: req.user ? req.user.name : 'Staff',
+      paidAt,
+      notes: trimmedNotes
+    };
+    await order.save();
+
+    const paymentMethodKey =
+      mode === 'Cash' ? 'cash' : mode === 'Card' ? 'counter_card' : 'counter_upi';
+
+    await Payment.findOneAndUpdate(
+      { orderId: order._id },
+      {
+        orderId: order._id,
+        razorpayOrderId: order.razorpayOrderId || '',
+        amount: order.totalAmount,
+        currency: 'INR',
+        status: 'captured',
+        method: paymentMethodKey,
+        cashReceived: tendered,
+        changeReturned,
+        collectedBy: req.user ? req.user._id : null,
+        notes: trimmedNotes,
+        verifiedAt: paidAt
+      },
+      { upsert: true, new: true }
+    );
+
+    const io = req.app.get('io');
+    await releaseTableIfSettled(order.tableNumber, io);
+
+    if (io) {
+      const payload = {
+        orderId: order._id,
+        paymentStatus: 'Paid',
+        paymentMethod: 'Counter',
+        cashSettlement: order.cashSettlement
+      };
+      io.to(`order-${order._id.toString()}`).emit('payment_status_updated', payload);
+      io.to(`order-${order._id.toString()}`).emit('payment_success', payload);
+      io.to('admin-room').emit('order_status_updated', order);
+    }
+
+    res.json({
+      success: true,
+      message: `${mode} payment of ₹${order.totalAmount} accepted for Order #${order.orderNumber}`,
+      data: order
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
   createOrder,
   getOrders,
   getOrderById,
   updateOrderStatus,
   updatePaymentStatus,
+  acceptCashPayment,
   releaseTableIfSettled
 };

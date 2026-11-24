@@ -9,7 +9,7 @@ const paymentSchema = new mongoose.Schema({
   },
   razorpayOrderId: {
     type: String,
-    required: true,
+    default: '',
     index: true
   },
   razorpayPaymentId: {
@@ -22,7 +22,8 @@ const paymentSchema = new mongoose.Schema({
   },
   amount: {
     type: Number,
-    required: true
+    required: true,
+    min: 0
   },
   currency: {
     type: String,
@@ -35,7 +36,26 @@ const paymentSchema = new mongoose.Schema({
   },
   method: {
     type: String,
+    enum: ['razorpay', 'cash', 'counter_card', 'counter_upi'],
     default: 'razorpay'
+  },
+  cashReceived: {
+    type: Number,
+    default: null
+  },
+  changeReturned: {
+    type: Number,
+    default: 0
+  },
+  collectedBy: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+    default: null
+  },
+  notes: {
+    type: String,
+    default: '',
+    trim: true
   },
   webhookPayload: {
     type: mongoose.Schema.Types.Mixed,
